@@ -62,15 +62,10 @@ enum InputEvent {
     PowerButton,
 }
 
-#[derive(PartialEq, Eq)]
-enum TvState {
-    Off,
-    Dennis,
-    Other,
-}
-
+#[derive(Debug)]
 struct State {
-    tv: TvState,
+    tv_is_on: bool,
+    dennis_is_current_input: bool,
 }
 
 fn send_switch_update(client: &mut Client, topic: &str, value: bool) {
@@ -84,13 +79,13 @@ fn send_switch_update(client: &mut Client, topic: &str, value: bool) {
         .unwrap();
 }
 
-fn send_passthru_flag_update(client: &mut Client, value: bool) {
+fn send_passthru_flag_update(client: &mut Client, state: &State) {
     client
         .publish(
             AIR_REMOTE_PASSTHRU_TOPIC,
             QoS::AtLeastOnce,
             false,
-            if value { "ON" } else { "OFF" },
+            if state.tv_is_on && state.dennis_is_current_input { "ON" } else { "OFF" },
         )
         .unwrap();
 }
@@ -107,10 +102,11 @@ fn send_sony_command(client: &mut Client, command: SonyCommand) {
 }
 
 fn handle_air_remote_event(event: &InputEvent, state: &State, client: &mut Client) {
+    println!("Input: {:?}", &event);
     match event {
         InputEvent::PowerButton => {
-            send_switch_update(client, TV_REMOTE_SWITCH_TOPIC, state.tv == TvState::Off);
-            send_switch_update(client, DENNIS_SWITCH_TOPIC, state.tv == TvState::Off);
+            send_switch_update(client, TV_REMOTE_SWITCH_TOPIC, !state.tv_is_on);
+            send_switch_update(client, DENNIS_SWITCH_TOPIC, !state.tv_is_on);
         }
         InputEvent::ConsumerCode { data } => match *data {
             CONSUMER_CODE_VOLUME_DOWN => send_sony_command(client, SonyCommand::VolumeDown),
@@ -154,14 +150,13 @@ fn main() {
     client.subscribe(TV_STATE_TOPIC, QoS::AtLeastOnce).unwrap();
     client.subscribe(TV_INPUT_TOPIC, QoS::AtLeastOnce).unwrap();
 
-    let mut state = State { tv: TvState::Off };
+    let mut state = State { tv_is_on: false, dennis_is_current_input: false };
 
     println!("Starting up");
 
     for notification in connection.iter().enumerate() {
         if let (_, Ok(Incoming(Publish(message)))) = notification {
             let payload: String = String::from_utf8(message.payload.into()).unwrap();
-            println!("From {:?}: {:?}", message.topic.as_str(), &payload);
             match message.topic.as_str() {
                 AIR_REMOTE_TOPIC => {
                     let event: InputEvent = serde_json::from_str(&payload).unwrap();
@@ -169,18 +164,21 @@ fn main() {
                 }
                 TV_STATE_TOPIC => {
                     if payload == "unavailable" {
-                        state.tv = TvState::Off;
-                        send_passthru_flag_update(&mut client, false);
+                        state.tv_is_on = false;
+                    } else {
+                        state.tv_is_on = true;
                     }
+                    send_passthru_flag_update(&mut client, &state);
+                    println!("State: {:?}", &state);
                 }
                 TV_INPUT_TOPIC => {
                     if payload == "\"HDMI 1\"" {
-                        state.tv = TvState::Dennis;
-                        send_passthru_flag_update(&mut client, true);
+                        state.dennis_is_current_input = true;
                     } else {
-                        state.tv = TvState::Other;
-                        send_passthru_flag_update(&mut client, false);
+                        state.dennis_is_current_input = false;
                     }
+                    send_passthru_flag_update(&mut client, &state);
+                    println!("State: {:?}", &state);
                 }
                 _ => {
                     println!(
