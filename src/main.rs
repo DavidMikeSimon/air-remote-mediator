@@ -5,20 +5,37 @@
  * ~3-8 seconds: homeassistant_statestream/media_player/sony_bravia/media_title: "Smart TV"
  */
 
+mod sony_commands;
+
 use std::{env, time::Duration};
 
 use rumqttc::{Client, Event::Incoming, MqttOptions, Packet::Publish, QoS};
 use serde::Deserialize;
 use serde_hex::{SerHex, StrictCapPfx};
+use serde_variant::to_variant_name;
+use sony_commands::SonyCommand;
 
 const AIR_REMOTE_TOPIC: &str = "/air-remote/events";
 const TV_STATE_TOPIC: &str = "homeassistant_statestream/media_player/sony_bravia_dlna/state";
 const TV_INPUT_TOPIC: &str = "homeassistant_statestream/media_player/sony_bravia/media_title";
 
-const TV_REMOTE_COMMAND_TOPIC: &str = "homeassistant_cmd/remote/sony_bravia";
+const TV_REMOTE_SWITCH_TOPIC: &str = "homeassistant_cmd/remote/sony_bravia";
+const TV_REMOTE_COMMAND_TOPIC: &str = "homeassistant_cmd/remote_command/sony_bravia";
 
 const OFF: &str = "off";
 const ON: &str = "on";
+
+const CONSUMER_CODE_VOLUME_UP: u8 = 0xE9;
+const CONSUMER_CODE_VOLUME_DOWN: u8 = 0xEA;
+const CONSUMER_CODE_MENU_ESCAPE: u8 = 0x46;
+const CONSUMER_CODE_CHANNEL: u8 = 0x86;
+const CONSUMER_CODE_MEDIA_SELECT_HOME: u8 = 0x9A;
+const CONSUMER_CODE_PLAY_PAUSE: u8 = 0xCD;
+
+const HID_KEY_ARROW_RIGHT: u8 = 0x4F;
+const HID_KEY_ARROW_LEFT: u8 = 0x50;
+const HID_KEY_ARROW_DOWN: u8 = 0x51;
+const HID_KEY_ARROW_UP: u8 = 0x52;
 
 #[derive(Deserialize, Debug)]
 #[serde(tag = "event")]
@@ -46,6 +63,60 @@ enum InputEvent {
     PowerButton,
 }
 
+struct State {
+    tv_on: bool,
+}
+
+fn send_sony_command(client: &mut Client, command: SonyCommand) {
+    client
+        .publish(
+            TV_REMOTE_COMMAND_TOPIC,
+            QoS::AtLeastOnce,
+            false,
+            to_variant_name(&command).unwrap(),
+        )
+        .unwrap();
+}
+
+fn handle_air_remote_event(event: &InputEvent, state: &State, client: &mut Client) {
+    match event {
+        InputEvent::PowerButton => {
+            client
+                .publish(
+                    TV_REMOTE_SWITCH_TOPIC,
+                    QoS::AtLeastOnce,
+                    false,
+                    if state.tv_on { OFF } else { ON },
+                )
+                .unwrap();
+        }
+        InputEvent::ConsumerCode { data } => match *data {
+            CONSUMER_CODE_VOLUME_DOWN => send_sony_command(client, SonyCommand::VolumeDown),
+            CONSUMER_CODE_VOLUME_UP => send_sony_command(client, SonyCommand::VolumeUp),
+            CONSUMER_CODE_CHANNEL => send_sony_command(client, SonyCommand::Input),
+            CONSUMER_CODE_MEDIA_SELECT_HOME => send_sony_command(client, SonyCommand::Home),
+            CONSUMER_CODE_MENU_ESCAPE => send_sony_command(client, SonyCommand::Exit),
+            CONSUMER_CODE_PLAY_PAUSE => send_sony_command(client, SonyCommand::Pause),
+            _ => {
+                println!("Unhandled consumer code: {:#04X}", data);
+            }
+        },
+        InputEvent::KeyCode { data } => match *data {
+            HID_KEY_ARROW_UP => send_sony_command(client, SonyCommand::Up),
+            HID_KEY_ARROW_DOWN => send_sony_command(client, SonyCommand::Down),
+            HID_KEY_ARROW_LEFT => send_sony_command(client, SonyCommand::Left),
+            HID_KEY_ARROW_RIGHT => send_sony_command(client, SonyCommand::Right),
+            _ => {
+                println!("Unhandled key code: {:#04X}", data);
+            }
+        }
+        InputEvent::OkButton => send_sony_command(client, SonyCommand::Confirm),
+        _ => {
+            println!("Event: {:?}", event);
+        }
+    }
+}
+
 fn main() {
     let mut mqtt_options =
         MqttOptions::new("air-remote-mediator", "mqtt.sinclair.pipsimon.com", 1883);
@@ -61,31 +132,18 @@ fn main() {
     client.subscribe(TV_STATE_TOPIC, QoS::AtLeastOnce).unwrap();
     client.subscribe(TV_INPUT_TOPIC, QoS::AtLeastOnce).unwrap();
 
-    let mut tv_on: bool = false;
+    let mut state = State { tv_on: false };
 
     for notification in connection.iter().enumerate() {
         if let (_, Ok(Incoming(Publish(message)))) = notification {
             let payload: String = String::from_utf8(message.payload.into()).unwrap();
-            match (message.topic.as_str()) {
+            match message.topic.as_str() {
                 AIR_REMOTE_TOPIC => {
                     let event: InputEvent = serde_json::from_str(&payload).unwrap();
-                    match event {
-                        InputEvent::PowerButton => {
-                            client.publish(
-                                TV_REMOTE_COMMAND_TOPIC,
-                                QoS::AtLeastOnce,
-                                false,
-                                if (tv_on) { OFF } else { ON },
-                            ).unwrap();
-                        }
-                        _ => {
-                            println!("{:?}", event);
-                        }
-                    }
+                    handle_air_remote_event(&event, &state, &mut client);
                 }
                 TV_STATE_TOPIC => {
-                    tv_on = payload != "unavailable";
-                    println!("TV STATE {:?}", tv_on);
+                    state.tv_on = payload != "unavailable";
                 }
                 TV_INPUT_TOPIC => {}
                 _ => {

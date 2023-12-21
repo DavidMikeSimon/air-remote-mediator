@@ -10,3 +10,4 @@ rumqttc = "0.23.0"
 serde = { version = "1.0.193", features = ['derive'] }
 serde-hex = "0.1.0"
 serde_json = "1.0.108"
+serde_variant = "0.1.2"
