@@ -19,11 +19,9 @@ const AIR_REMOTE_TOPIC: &str = "/air-remote/events";
 const TV_STATE_TOPIC: &str = "homeassistant_statestream/media_player/sony_bravia_dlna/state";
 const TV_INPUT_TOPIC: &str = "homeassistant_statestream/media_player/sony_bravia/media_title";
 
+const AIR_REMOTE_PASSTHRU_TOPIC: &str = "/air-remote/passthru-setting";
 const TV_REMOTE_SWITCH_TOPIC: &str = "homeassistant_cmd/remote/sony_bravia";
 const TV_REMOTE_COMMAND_TOPIC: &str = "homeassistant_cmd/remote_command/sony_bravia";
-
-const OFF: &str = "off";
-const ON: &str = "on";
 
 const CONSUMER_CODE_VOLUME_UP: u8 = 0xE9;
 const CONSUMER_CODE_VOLUME_DOWN: u8 = 0xEA;
@@ -63,8 +61,26 @@ enum InputEvent {
     PowerButton,
 }
 
+#[derive(PartialEq, Eq)]
+enum TvState {
+    Off,
+    Dennis,
+    Other,
+}
+
 struct State {
-    tv_on: bool,
+    tv: TvState,
+}
+
+fn send_passthru_flag_update(client: &mut Client, value: bool) {
+    client
+        .publish(
+            AIR_REMOTE_PASSTHRU_TOPIC,
+            QoS::AtLeastOnce,
+            false,
+            if value { "ON" } else { "OFF" }
+        )
+        .unwrap();
 }
 
 fn send_sony_command(client: &mut Client, command: SonyCommand) {
@@ -86,7 +102,7 @@ fn handle_air_remote_event(event: &InputEvent, state: &State, client: &mut Clien
                     TV_REMOTE_SWITCH_TOPIC,
                     QoS::AtLeastOnce,
                     false,
-                    if state.tv_on { OFF } else { ON },
+                    if state.tv == TvState::Off { "on" } else { "off" },
                 )
                 .unwrap();
         }
@@ -132,7 +148,7 @@ fn main() {
     client.subscribe(TV_STATE_TOPIC, QoS::AtLeastOnce).unwrap();
     client.subscribe(TV_INPUT_TOPIC, QoS::AtLeastOnce).unwrap();
 
-    let mut state = State { tv_on: false };
+    let mut state = State { tv: TvState::Off };
 
     for notification in connection.iter().enumerate() {
         if let (_, Ok(Incoming(Publish(message)))) = notification {
@@ -143,9 +159,20 @@ fn main() {
                     handle_air_remote_event(&event, &state, &mut client);
                 }
                 TV_STATE_TOPIC => {
-                    state.tv_on = payload != "unavailable";
+                    if payload == "unavailable" {
+                        state.tv = TvState::Off;
+                        send_passthru_flag_update(&mut client, false);
+                    }
                 }
-                TV_INPUT_TOPIC => {}
+                TV_INPUT_TOPIC => {
+                    if payload == "\"HDMI 1\"" {
+                        state.tv = TvState::Dennis;
+                        send_passthru_flag_update(&mut client, true);
+                    } else {
+                        state.tv = TvState::Other;
+                        send_passthru_flag_update(&mut client, false);
+                    }
+                }
                 _ => {
                     println!(
                         "Message from unknown topic {:?}: {:?}",
