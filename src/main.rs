@@ -20,6 +20,7 @@ const TV_STATE_TOPIC: &str = "homeassistant_statestream/media_player/sony_bravia
 const TV_INPUT_TOPIC: &str = "homeassistant_statestream/media_player/sony_bravia/media_title";
 
 const AIR_REMOTE_PASSTHRU_TOPIC: &str = "/air-remote/passthru-setting";
+const DENNIS_SWITCH_TOPIC: &str = "homeassistant_cmd/switch/dennis";
 const TV_REMOTE_SWITCH_TOPIC: &str = "homeassistant_cmd/remote/sony_bravia";
 const TV_REMOTE_COMMAND_TOPIC: &str = "homeassistant_cmd/remote_command/sony_bravia";
 
@@ -72,13 +73,24 @@ struct State {
     tv: TvState,
 }
 
+fn send_switch_update(client: &mut Client, topic: &str, value: bool) {
+    client
+        .publish(
+            topic,
+            QoS::AtLeastOnce,
+            false,
+            if value { "on" } else { "off" },
+        )
+        .unwrap();
+}
+
 fn send_passthru_flag_update(client: &mut Client, value: bool) {
     client
         .publish(
             AIR_REMOTE_PASSTHRU_TOPIC,
             QoS::AtLeastOnce,
             false,
-            if value { "ON" } else { "OFF" }
+            if value { "ON" } else { "OFF" },
         )
         .unwrap();
 }
@@ -97,14 +109,8 @@ fn send_sony_command(client: &mut Client, command: SonyCommand) {
 fn handle_air_remote_event(event: &InputEvent, state: &State, client: &mut Client) {
     match event {
         InputEvent::PowerButton => {
-            client
-                .publish(
-                    TV_REMOTE_SWITCH_TOPIC,
-                    QoS::AtLeastOnce,
-                    false,
-                    if state.tv == TvState::Off { "on" } else { "off" },
-                )
-                .unwrap();
+            send_switch_update(client, TV_REMOTE_SWITCH_TOPIC, state.tv == TvState::Off);
+            send_switch_update(client, DENNIS_SWITCH_TOPIC, state.tv == TvState::Off);
         }
         InputEvent::ConsumerCode { data } => match *data {
             CONSUMER_CODE_VOLUME_DOWN => send_sony_command(client, SonyCommand::VolumeDown),
@@ -125,7 +131,7 @@ fn handle_air_remote_event(event: &InputEvent, state: &State, client: &mut Clien
             _ => {
                 println!("Unhandled key code: {:#04X}", data);
             }
-        }
+        },
         InputEvent::OkButton => send_sony_command(client, SonyCommand::Confirm),
         _ => {
             println!("Event: {:?}", event);
