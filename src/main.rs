@@ -156,9 +156,12 @@ fn main() {
 
     let mut state = State { tv: TvState::Off };
 
+    println!("Starting up");
+
     for notification in connection.iter().enumerate() {
         if let (_, Ok(Incoming(Publish(message)))) = notification {
             let payload: String = String::from_utf8(message.payload.into()).unwrap();
+            println!("From {:?}: {:?}", message.topic.as_str(), &payload);
             match message.topic.as_str() {
                 AIR_REMOTE_TOPIC => {
                     let event: InputEvent = serde_json::from_str(&payload).unwrap();
