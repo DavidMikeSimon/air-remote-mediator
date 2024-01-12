@@ -153,8 +153,8 @@ fn handle_air_remote_event(event: &InputEvent, state: &State, client: &mut Clien
             }
         },
         InputEvent::OkButton => {
-            if (state.dennis_is_current_input) {
-                if (state.tv_is_on) {
+            if state.dennis_is_current_input {
+                if state.tv_is_on {
                     send_switch_update(client, DENNIS_SWITCH_TOPIC, true);
                 }
             } else {
