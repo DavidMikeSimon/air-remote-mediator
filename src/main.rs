@@ -16,7 +16,7 @@ use serde_variant::to_variant_name;
 use sony_commands::SonyCommand;
 
 const AIR_REMOTE_TOPIC: &str = "/air-remote/events";
-const TV_STATE_TOPIC: &str = "homeassistant_statestream/media_player/sony_bravia_dlna/state";
+const TV_STATE_TOPIC: &str = "homeassistant_statestream/media_player/sony_bravia/state";
 const TV_INPUT_TOPIC: &str = "homeassistant_statestream/media_player/sony_bravia/media_title";
 
 const AIR_REMOTE_PASSTHRU_TOPIC: &str = "/air-remote/passthru-setting";
@@ -85,7 +85,11 @@ fn send_passthru_flag_update(client: &mut Client, state: &State) {
             AIR_REMOTE_PASSTHRU_TOPIC,
             QoS::AtLeastOnce,
             false,
-            if state.tv_is_on && state.dennis_is_current_input { "ON" } else { "OFF" },
+            if state.tv_is_on && state.dennis_is_current_input {
+                "ON"
+            } else {
+                "OFF"
+            },
         )
         .unwrap();
 }
@@ -114,21 +118,49 @@ fn handle_air_remote_event(event: &InputEvent, state: &State, client: &mut Clien
             CONSUMER_CODE_CHANNEL => send_sony_command(client, SonyCommand::Input),
             CONSUMER_CODE_MEDIA_SELECT_HOME => send_sony_command(client, SonyCommand::Home),
             CONSUMER_CODE_MENU_ESCAPE => send_sony_command(client, SonyCommand::Exit),
-            CONSUMER_CODE_PLAY_PAUSE => send_sony_command(client, SonyCommand::Pause),
+            CONSUMER_CODE_PLAY_PAUSE => {
+                if !state.dennis_is_current_input {
+                    send_sony_command(client, SonyCommand::Pause)
+                }
+            }
             _ => {
                 println!("Unhandled consumer code: {:#04X}", data);
             }
         },
         InputEvent::KeyCode { data } => match *data {
-            HID_KEY_ARROW_UP => send_sony_command(client, SonyCommand::Up),
-            HID_KEY_ARROW_DOWN => send_sony_command(client, SonyCommand::Down),
-            HID_KEY_ARROW_LEFT => send_sony_command(client, SonyCommand::Left),
-            HID_KEY_ARROW_RIGHT => send_sony_command(client, SonyCommand::Right),
+            HID_KEY_ARROW_UP => {
+                if !state.dennis_is_current_input {
+                    send_sony_command(client, SonyCommand::Up)
+                }
+            }
+            HID_KEY_ARROW_DOWN => {
+                if !state.dennis_is_current_input {
+                    send_sony_command(client, SonyCommand::Down)
+                }
+            }
+            HID_KEY_ARROW_LEFT => {
+                if !state.dennis_is_current_input {
+                    send_sony_command(client, SonyCommand::Left)
+                }
+            }
+            HID_KEY_ARROW_RIGHT => {
+                if !state.dennis_is_current_input {
+                    send_sony_command(client, SonyCommand::Right)
+                }
+            }
             _ => {
                 println!("Unhandled key code: {:#04X}", data);
             }
         },
-        InputEvent::OkButton => send_sony_command(client, SonyCommand::Confirm),
+        InputEvent::OkButton => {
+            if (state.dennis_is_current_input) {
+                if (state.tv_is_on) {
+                    send_switch_update(client, DENNIS_SWITCH_TOPIC, true);
+                }
+            } else {
+                send_sony_command(client, SonyCommand::Confirm);
+            }
+        },
         _ => {
             println!("Event: {:?}", event);
         }
@@ -150,7 +182,10 @@ fn main() {
     client.subscribe(TV_STATE_TOPIC, QoS::AtLeastOnce).unwrap();
     client.subscribe(TV_INPUT_TOPIC, QoS::AtLeastOnce).unwrap();
 
-    let mut state = State { tv_is_on: false, dennis_is_current_input: false };
+    let mut state = State {
+        tv_is_on: false,
+        dennis_is_current_input: false,
+    };
 
     println!("Starting up");
 
@@ -163,7 +198,7 @@ fn main() {
                     handle_air_remote_event(&event, &state, &mut client);
                 }
                 TV_STATE_TOPIC => {
-                    if payload == "unavailable" {
+                    if payload == "off" {
                         state.tv_is_on = false;
                     } else {
                         state.tv_is_on = true;
