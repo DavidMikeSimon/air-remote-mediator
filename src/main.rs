@@ -23,6 +23,7 @@ const AIR_REMOTE_PASSTHRU_TOPIC: &str = "/air-remote/passthru-setting";
 const DENNIS_SWITCH_TOPIC: &str = "homeassistant_cmd/switch/dennis";
 const TV_REMOTE_SWITCH_TOPIC: &str = "homeassistant_cmd/remote/sony_bravia";
 const TV_REMOTE_COMMAND_TOPIC: &str = "homeassistant_cmd/remote_command/sony_bravia";
+const TV_MEDIA_PLAYER_APP_TOPIC: &str = "homeassistant_cmd/media_player_app/sony_bravia";
 
 const CONSUMER_CODE_VOLUME_UP: u8 = 0xE9;
 const CONSUMER_CODE_VOLUME_DOWN: u8 = 0xEA;
@@ -105,6 +106,17 @@ fn send_sony_command(client: &mut Client, command: SonyCommand) {
         .unwrap();
 }
 
+fn open_sony_app(client: &mut Client, app_name: &str) {
+    client
+        .publish(
+            TV_MEDIA_PLAYER_APP_TOPIC,
+            QoS::AtLeastOnce,
+            false,
+            app_name,
+        )
+        .unwrap();
+}
+
 fn handle_air_remote_event(event: &InputEvent, state: &State, client: &mut Client) {
     println!("Input: {:?}", &event);
     match event {
@@ -116,8 +128,8 @@ fn handle_air_remote_event(event: &InputEvent, state: &State, client: &mut Clien
             CONSUMER_CODE_VOLUME_DOWN => send_sony_command(client, SonyCommand::VolumeDown),
             CONSUMER_CODE_VOLUME_UP => send_sony_command(client, SonyCommand::VolumeUp),
             CONSUMER_CODE_CHANNEL => send_sony_command(client, SonyCommand::Input),
-            CONSUMER_CODE_MEDIA_SELECT_HOME => send_sony_command(client, SonyCommand::Home),
-            CONSUMER_CODE_MENU_ESCAPE => send_sony_command(client, SonyCommand::Exit),
+            CONSUMER_CODE_MEDIA_SELECT_HOME => open_sony_app(client, "HALauncher"),
+            CONSUMER_CODE_MENU_ESCAPE => send_sony_command(client, SonyCommand::Return),
             CONSUMER_CODE_PLAY_PAUSE => {
                 if !state.dennis_is_current_input {
                     send_sony_command(client, SonyCommand::Pause)
