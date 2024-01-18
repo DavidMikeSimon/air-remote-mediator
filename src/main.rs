@@ -15,11 +15,11 @@ use serde_hex::{SerHex, StrictCapPfx};
 use serde_variant::to_variant_name;
 use sony_commands::SonyCommand;
 
-const AIR_REMOTE_TOPIC: &str = "/air-remote/events";
+const AIR_REMOTE_TOPIC: &str = "air-remote/events";
 const TV_STATE_TOPIC: &str = "homeassistant_statestream/media_player/sony_bravia/state";
 const TV_INPUT_TOPIC: &str = "homeassistant_statestream/media_player/sony_bravia/media_title";
 
-const AIR_REMOTE_PASSTHRU_TOPIC: &str = "/air-remote/passthru-setting";
+const AIR_REMOTE_PASSTHRU_TOPIC: &str = "air-remote/passthru-setting";
 const DENNIS_SWITCH_TOPIC: &str = "homeassistant_cmd/switch/dennis";
 const TV_REMOTE_SWITCH_TOPIC: &str = "homeassistant_cmd/remote/sony_bravia";
 const TV_REMOTE_COMMAND_TOPIC: &str = "homeassistant_cmd/remote_command/sony_bravia";
