@@ -108,12 +108,7 @@ fn send_sony_command(client: &mut Client, command: SonyCommand) {
 
 fn open_sony_app(client: &mut Client, app_name: &str) {
     client
-        .publish(
-            TV_MEDIA_PLAYER_APP_TOPIC,
-            QoS::AtLeastOnce,
-            false,
-            app_name,
-        )
+        .publish(TV_MEDIA_PLAYER_APP_TOPIC, QoS::AtLeastOnce, false, app_name)
         .unwrap();
 }
 
@@ -140,39 +135,18 @@ fn handle_air_remote_event(event: &InputEvent, state: &State, client: &mut Clien
             }
         },
         InputEvent::KeyCode { data } => match *data {
-            HID_KEY_ARROW_UP => {
-                if !state.dennis_is_current_input {
-                    send_sony_command(client, SonyCommand::Up)
-                }
-            }
-            HID_KEY_ARROW_DOWN => {
-                if !state.dennis_is_current_input {
-                    send_sony_command(client, SonyCommand::Down)
-                }
-            }
-            HID_KEY_ARROW_LEFT => {
-                if !state.dennis_is_current_input {
-                    send_sony_command(client, SonyCommand::Left)
-                }
-            }
-            HID_KEY_ARROW_RIGHT => {
-                if !state.dennis_is_current_input {
-                    send_sony_command(client, SonyCommand::Right)
-                }
-            }
-            _ => {
-                println!("Unhandled key code: {:#04X}", data);
-            }
+            HID_KEY_ARROW_UP => send_sony_command(client, SonyCommand::Up),
+            HID_KEY_ARROW_DOWN => send_sony_command(client, SonyCommand::Down),
+            HID_KEY_ARROW_LEFT => send_sony_command(client, SonyCommand::Left),
+            HID_KEY_ARROW_RIGHT => send_sony_command(client, SonyCommand::Right),
+            _ => println!("Unhandled key code: {:#04X}", data),
         },
         InputEvent::OkButton => {
-            if state.dennis_is_current_input {
-                if state.tv_is_on {
-                    send_switch_update(client, DENNIS_SWITCH_TOPIC, true);
-                }
-            } else {
-                send_sony_command(client, SonyCommand::Confirm);
+            if state.dennis_is_current_input && state.tv_is_on {
+                send_switch_update(client, DENNIS_SWITCH_TOPIC, true);
             }
-        },
+            send_sony_command(client, SonyCommand::Confirm);
+        }
         _ => {
             println!("Event: {:?}", event);
         }
