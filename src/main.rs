@@ -20,10 +20,13 @@ const TV_STATE_TOPIC: &str = "homeassistant_statestream/media_player/sony_bravia
 const TV_INPUT_TOPIC: &str = "homeassistant_statestream/media_player/sony_bravia/media_title";
 
 const AIR_REMOTE_PASSTHRU_TOPIC: &str = "air-remote/passthru-setting";
-const DENNIS_SWITCH_TOPIC: &str = "homeassistant_cmd/switch/dennis";
-const TV_REMOTE_SWITCH_TOPIC: &str = "homeassistant_cmd/remote/sony_bravia";
 const TV_REMOTE_COMMAND_TOPIC: &str = "homeassistant_cmd/remote_command/sony_bravia";
 const TV_MEDIA_PLAYER_APP_TOPIC: &str = "homeassistant_cmd/media_player_app/sony_bravia";
+
+const HA_SCRIPT_TOPIC_BASE: &str = "homeassistant_cmd/script/";
+const HA_SCRIPT_TOGGLE_TV_AND_DENNIS: &str = "toggle_tv_and_dennis";
+const HA_SCRIPT_TV_VOLUME_UP: &str = "tv_volume_up";
+const HA_SCRIPT_TV_VOLUME_DOWN: &str = "tv_volume_down";
 
 const CONSUMER_CODE_VOLUME_UP: u8 = 0xE9;
 const CONSUMER_CODE_VOLUME_DOWN: u8 = 0xEA;
@@ -69,17 +72,6 @@ struct State {
     dennis_is_current_input: bool,
 }
 
-fn send_switch_update(client: &mut Client, topic: &str, value: bool) {
-    client
-        .publish(
-            topic,
-            QoS::AtLeastOnce,
-            false,
-            if value { "on" } else { "off" },
-        )
-        .unwrap();
-}
-
 fn send_passthru_flag_update(client: &mut Client, state: &State) {
     client
         .publish(
@@ -91,6 +83,17 @@ fn send_passthru_flag_update(client: &mut Client, state: &State) {
             } else {
                 "OFF"
             },
+        )
+        .unwrap();
+}
+
+fn send_ha_script_command(client: &mut Client, script_name: &str) {
+    client
+        .publish(
+            format!("{}{}", HA_SCRIPT_TOPIC_BASE, script_name),
+            QoS::AtLeastOnce,
+            false,
+            "",
         )
         .unwrap();
 }
@@ -116,12 +119,11 @@ fn handle_air_remote_event(event: &InputEvent, state: &State, client: &mut Clien
     println!("Input: {:?}", &event);
     match event {
         InputEvent::PowerButton => {
-            send_switch_update(client, TV_REMOTE_SWITCH_TOPIC, !state.tv_is_on);
-            send_switch_update(client, DENNIS_SWITCH_TOPIC, !state.tv_is_on);
+            send_ha_script_command(client, HA_SCRIPT_TOGGLE_TV_AND_DENNIS);
         }
         InputEvent::ConsumerCode { data } => match *data {
-            CONSUMER_CODE_VOLUME_DOWN => send_sony_command(client, SonyCommand::VolumeDown),
-            CONSUMER_CODE_VOLUME_UP => send_sony_command(client, SonyCommand::VolumeUp),
+            CONSUMER_CODE_VOLUME_DOWN => send_ha_script_command(client, HA_SCRIPT_TV_VOLUME_DOWN),
+            CONSUMER_CODE_VOLUME_UP => send_ha_script_command(client, HA_SCRIPT_TV_VOLUME_UP),
             CONSUMER_CODE_CHANNEL => send_sony_command(client, SonyCommand::Input),
             CONSUMER_CODE_MEDIA_SELECT_HOME => open_sony_app(client, "HALauncher"),
             CONSUMER_CODE_MENU_ESCAPE => send_sony_command(client, SonyCommand::Return),
@@ -142,9 +144,6 @@ fn handle_air_remote_event(event: &InputEvent, state: &State, client: &mut Clien
             _ => println!("Unhandled key code: {:#04X}", data),
         },
         InputEvent::OkButton => {
-            if state.dennis_is_current_input && state.tv_is_on {
-                send_switch_update(client, DENNIS_SWITCH_TOPIC, true);
-            }
             send_sony_command(client, SonyCommand::Confirm);
         }
         _ => {
