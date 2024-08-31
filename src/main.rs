@@ -45,6 +45,7 @@ const HID_KEY_ARROW_UP: u8 = 0x52;
 enum InputEvent {
     #[serde(rename = "A")]
     AsciiKey {
+        #[allow(dead_code)]
         #[serde(with = "SerHex::<StrictCapPfx>")]
         data: u8,
     },
