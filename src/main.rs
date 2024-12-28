@@ -155,14 +155,8 @@ fn handle_air_remote_event(event: &InputEvent, state: &State, client: &mut Clien
             send_sony_command(client, SonyCommand::Confirm);
         }
         InputEvent::UsbReadinessStateChange { data } => match *data {
-            b'N' => {
-                println!("N");
-                send_ha_script_command(client, HA_SCRIPT_NOTICE_DENNIS_USB_OFF);
-            }
-            b'Y' => {
-                println!("Y");
-                send_ha_script_command(client, HA_SCRIPT_NOTICE_DENNIS_USB_ON);
-            }
+            b'N' => send_ha_script_command(client, HA_SCRIPT_NOTICE_DENNIS_USB_OFF),
+            b'Y' => send_ha_script_command(client, HA_SCRIPT_NOTICE_DENNIS_USB_ON),
             _ => println!("Unhandled USB readiness state: {:#04X}", data),
         },
         InputEvent::AsciiKey { .. } | InputEvent::NetworkConnected => {
@@ -196,7 +190,6 @@ fn main() {
     for notification in connection.iter().enumerate() {
         if let (_, Ok(Incoming(Publish(message)))) = notification {
             let payload: String = String::from_utf8(message.payload.into()).unwrap();
-            println!("Message from topic {:?}: \"{:?}\"", message.topic, payload);
             match message.topic.as_str() {
                 AIR_REMOTE_TOPIC => {
                     let event: InputEvent = serde_json::from_str(&payload).unwrap();
