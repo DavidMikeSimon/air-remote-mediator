@@ -27,6 +27,8 @@ const HA_SCRIPT_TOPIC_BASE: &str = "homeassistant_cmd/script/";
 const HA_SCRIPT_TOGGLE_TV_AND_DENNIS: &str = "toggle_tv_and_dennis";
 const HA_SCRIPT_TV_VOLUME_UP: &str = "tv_volume_up";
 const HA_SCRIPT_TV_VOLUME_DOWN: &str = "tv_volume_down";
+const HA_SCRIPT_NOTICE_DENNIS_USB_OFF: &str = "notice_dennis_usb_readiness_off";
+const HA_SCRIPT_NOTICE_DENNIS_USB_ON: &str = "notice_dennis_usb_readiness_on";
 
 const CONSUMER_CODE_VOLUME_UP: u8 = 0xE9;
 const CONSUMER_CODE_VOLUME_DOWN: u8 = 0xEA;
@@ -65,6 +67,11 @@ enum InputEvent {
     OkButton,
     #[serde(rename = "W")]
     PowerButton,
+    #[serde(rename = "U")]
+    UsbReadinessStateChange {
+        #[serde(with = "SerHex::<StrictCapPfx>")]
+        data: u8,
+    },
 }
 
 #[derive(Debug)]
@@ -147,7 +154,18 @@ fn handle_air_remote_event(event: &InputEvent, state: &State, client: &mut Clien
         InputEvent::OkButton => {
             send_sony_command(client, SonyCommand::Confirm);
         }
-        _ => {
+        InputEvent::UsbReadinessStateChange { data } => match *data {
+            b'N' => {
+                println!("N");
+                send_ha_script_command(client, HA_SCRIPT_NOTICE_DENNIS_USB_OFF);
+            }
+            b'Y' => {
+                println!("Y");
+                send_ha_script_command(client, HA_SCRIPT_NOTICE_DENNIS_USB_ON);
+            }
+            _ => println!("Unhandled USB readiness state: {:#04X}", data),
+        },
+        InputEvent::AsciiKey { .. } | InputEvent::NetworkConnected => {
             println!("Event: {:?}", event);
         }
     }
@@ -178,6 +196,7 @@ fn main() {
     for notification in connection.iter().enumerate() {
         if let (_, Ok(Incoming(Publish(message)))) = notification {
             let payload: String = String::from_utf8(message.payload.into()).unwrap();
+            println!("Message from topic {:?}: \"{:?}\"", message.topic, payload);
             match message.topic.as_str() {
                 AIR_REMOTE_TOPIC => {
                     let event: InputEvent = serde_json::from_str(&payload).unwrap();
@@ -202,10 +221,7 @@ fn main() {
                     println!("State: {:?}", &state);
                 }
                 _ => {
-                    println!(
-                        "Message from unknown topic {:?}: {:?}",
-                        message.topic, payload
-                    );
+                    println!("ERR: Message from unknown topic {:?}", message.topic);
                 }
             }
         }
