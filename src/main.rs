@@ -18,6 +18,7 @@ use rumqttc::{
 };
 use serde::Deserialize;
 use serde_hex::{SerHex, StrictCapPfx};
+use serde_json::json;
 use serde_variant::to_variant_name;
 use sony_commands::SonyCommand;
 
@@ -26,10 +27,8 @@ const TV_STATE_TOPIC: &str = "homeassistant_statestream/media_player/sony_bravia
 const TV_INPUT_TOPIC: &str = "homeassistant_statestream/media_player/sony_bravia/media_title";
 
 const AIR_REMOTE_PASSTHRU_TOPIC: &str = "air-remote/passthru-setting";
-const TV_REMOTE_COMMAND_TOPIC: &str = "homeassistant_cmd/remote_command/sony_bravia";
-const TV_MEDIA_PLAYER_APP_TOPIC: &str = "homeassistant_cmd/media_player_app/sony_bravia";
+const HOME_ASSISTANT_RUN_TOPIC: &str = "homeassistant_cmd/run";
 
-const HA_SCRIPT_TOPIC_BASE: &str = "homeassistant_cmd/script/";
 const HA_SCRIPT_TOGGLE_TV_AND_DENNIS: &str = "toggle_tv_and_dennis";
 const HA_SCRIPT_TV_VOLUME_UP: &str = "tv_volume_up";
 const HA_SCRIPT_TV_VOLUME_DOWN: &str = "tv_volume_down";
@@ -101,32 +100,41 @@ fn send_passthru_flag_update(client: &mut Client, state: &State) {
         .unwrap();
 }
 
-fn send_ha_script_command(client: &mut Client, script_name: &str) {
+fn send_ha_command(client: &mut Client, topic: &str, payload: &str) {
     client
         .publish(
-            format!("{}{}", HA_SCRIPT_TOPIC_BASE, script_name),
+            format!("{}/{}", HOME_ASSISTANT_RUN_TOPIC, topic),
             QoS::AtLeastOnce,
             false,
-            "",
+            payload,
         )
         .unwrap();
+}
+
+fn send_ha_script_command(client: &mut Client, script_name: &str) {
+    let payload = json!({
+        "entity_id": format!("script.{}", script_name)
+    })
+    .to_string();
+    send_ha_command(client, "script.turn_on", &payload);
 }
 
 fn send_sony_command(client: &mut Client, command: SonyCommand) {
-    client
-        .publish(
-            TV_REMOTE_COMMAND_TOPIC,
-            QoS::AtLeastOnce,
-            false,
-            to_variant_name(&command).unwrap(),
-        )
-        .unwrap();
+    let payload = json!({
+        "entity_id": "remote.sony_bravia",
+        "command": to_variant_name(&command).unwrap()
+    })
+    .to_string();
+    send_ha_command(client, "remote.send_command", &payload);
 }
 
 fn open_sony_app(client: &mut Client, app_name: &str) {
-    client
-        .publish(TV_MEDIA_PLAYER_APP_TOPIC, QoS::AtLeastOnce, false, app_name)
-        .unwrap();
+    let payload = json!({
+        "entity_id": "media_player.sony_bravia",
+        "media_content_id": app_name
+    })
+    .to_string();
+    send_ha_command(client, "media_player.play_media", &payload);
 }
 
 fn handle_air_remote_event(event: &InputEvent, state: &State, client: &mut Client) {
