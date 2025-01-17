@@ -3,7 +3,7 @@
 FROM rust:1.74.0 AS builder
 WORKDIR /root/workdir
 
-COPY Cargo.toml Cargo.lock .
+COPY Cargo.toml Cargo.lock ./
 RUN \
     mkdir /root/workdir/src && \
     echo 'fn main() {}' > /root/workdir/src/main.rs && \
