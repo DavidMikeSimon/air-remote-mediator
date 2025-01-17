@@ -9,7 +9,13 @@ mod sony_commands;
 
 use std::{env, time::Duration};
 
-use rumqttc::{Client, Event::Incoming, MqttOptions, Packet::Publish, QoS};
+use rumqttc::{
+    Client,
+    Event::{Incoming, Outgoing},
+    MqttOptions,
+    Packet::{ConnAck, Publish},
+    QoS,
+};
 use serde::Deserialize;
 use serde_hex::{SerHex, StrictCapPfx};
 use serde_variant::to_variant_name;
@@ -176,10 +182,6 @@ fn main() {
 
     let (mut client, mut connection) = Client::new(mqtt_options, 10);
 
-    client.subscribe(AIR_REMOTE_TOPIC, QoS::AtMostOnce).unwrap();
-    client.subscribe(TV_STATE_TOPIC, QoS::AtLeastOnce).unwrap();
-    client.subscribe(TV_INPUT_TOPIC, QoS::AtLeastOnce).unwrap();
-
     let mut state = State {
         tv_is_on: false,
         dennis_is_current_input: false,
@@ -188,34 +190,48 @@ fn main() {
     println!("Starting up");
 
     for notification in connection.iter().enumerate() {
-        if let (_, Ok(Incoming(Publish(message)))) = notification {
-            let payload: String = String::from_utf8(message.payload.into()).unwrap();
-            match message.topic.as_str() {
-                AIR_REMOTE_TOPIC => {
-                    let event: InputEvent = serde_json::from_str(&payload).unwrap();
-                    handle_air_remote_event(&event, &state, &mut client);
-                }
-                TV_STATE_TOPIC => {
-                    if payload == "off" {
-                        state.tv_is_on = false;
-                    } else {
-                        state.tv_is_on = true;
+        match notification {
+            (_, Ok(Incoming(Publish(message)))) => {
+                let payload: String = String::from_utf8(message.payload.into()).unwrap();
+                match message.topic.as_str() {
+                    AIR_REMOTE_TOPIC => {
+                        let event: InputEvent = serde_json::from_str(&payload).unwrap();
+                        handle_air_remote_event(&event, &state, &mut client);
                     }
-                    send_passthru_flag_update(&mut client, &state);
-                    println!("State: {:?}", &state);
-                }
-                TV_INPUT_TOPIC => {
-                    if payload == "\"HDMI 1\"" {
-                        state.dennis_is_current_input = true;
-                    } else {
-                        state.dennis_is_current_input = false;
+                    TV_STATE_TOPIC => {
+                        if payload == "off" {
+                            state.tv_is_on = false;
+                        } else {
+                            state.tv_is_on = true;
+                        }
+                        send_passthru_flag_update(&mut client, &state);
+                        println!("State: {:?}", &state);
                     }
-                    send_passthru_flag_update(&mut client, &state);
-                    println!("State: {:?}", &state);
+                    TV_INPUT_TOPIC => {
+                        if payload == "\"HDMI 1\"" {
+                            state.dennis_is_current_input = true;
+                        } else {
+                            state.dennis_is_current_input = false;
+                        }
+                        send_passthru_flag_update(&mut client, &state);
+                        println!("State: {:?}", &state);
+                    }
+                    _ => {
+                        println!("ERR: Message from unknown topic {:?}", message.topic);
+                    }
                 }
-                _ => {
-                    println!("ERR: Message from unknown topic {:?}", message.topic);
-                }
+            }
+            (_, Ok(Incoming(ConnAck(_)))) => {
+                println!("Connected to MQTT");
+                client.subscribe(AIR_REMOTE_TOPIC, QoS::AtMostOnce).unwrap();
+                client.subscribe(TV_STATE_TOPIC, QoS::AtLeastOnce).unwrap();
+                client.subscribe(TV_INPUT_TOPIC, QoS::AtLeastOnce).unwrap();
+            }
+            (_, Ok(Incoming(_))) => {}
+            (_, Ok(Outgoing(_))) => {}
+            (_, Err(err)) => {
+                println!("ERR: {:?}", err);
+                return;
             }
         }
     }
