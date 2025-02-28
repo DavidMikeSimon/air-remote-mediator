@@ -30,8 +30,6 @@ const AIR_REMOTE_PASSTHRU_TOPIC: &str = "air-remote/passthru-setting";
 const HOME_ASSISTANT_RUN_TOPIC: &str = "homeassistant_cmd/run";
 
 const HA_SCRIPT_TOGGLE_TV_AND_DENNIS: &str = "toggle_tv_and_dennis";
-const HA_SCRIPT_TV_VOLUME_UP: &str = "tv_volume_up";
-const HA_SCRIPT_TV_VOLUME_DOWN: &str = "tv_volume_down";
 const HA_SCRIPT_NOTICE_DENNIS_USB_OFF: &str = "notice_dennis_usb_readiness_off";
 const HA_SCRIPT_NOTICE_DENNIS_USB_ON: &str = "notice_dennis_usb_readiness_on";
 
@@ -137,6 +135,18 @@ fn open_sony_app(client: &mut Client, app_name: &str) {
     send_ha_command(client, "media_player.play_media", &payload);
 }
 
+fn send_media_player_command(client: &mut Client, command: &str) {
+    let payload = json!({
+        "entity_id": "media_player.sony_bravia",
+    })
+    .to_string();
+    send_ha_command(
+        client,
+        format!("media_player.{}", command).as_ref(),
+        &payload,
+    );
+}
+
 fn handle_air_remote_event(event: &InputEvent, state: &State, client: &mut Client) {
     println!("Input: {:?}", &event);
     match event {
@@ -144,8 +154,8 @@ fn handle_air_remote_event(event: &InputEvent, state: &State, client: &mut Clien
             send_ha_script_command(client, HA_SCRIPT_TOGGLE_TV_AND_DENNIS);
         }
         InputEvent::ConsumerCode { data } => match *data {
-            CONSUMER_CODE_VOLUME_DOWN => send_ha_script_command(client, HA_SCRIPT_TV_VOLUME_DOWN),
-            CONSUMER_CODE_VOLUME_UP => send_ha_script_command(client, HA_SCRIPT_TV_VOLUME_UP),
+            CONSUMER_CODE_VOLUME_DOWN => send_media_player_command(client, "volume_down"),
+            CONSUMER_CODE_VOLUME_UP => send_media_player_command(client, "volume_up"),
             CONSUMER_CODE_CHANNEL => send_sony_command(client, SonyCommand::Input),
             CONSUMER_CODE_MEDIA_SELECT_HOME => open_sony_app(client, "HALauncher"),
             CONSUMER_CODE_MENU_ESCAPE => send_sony_command(client, SonyCommand::Return),
