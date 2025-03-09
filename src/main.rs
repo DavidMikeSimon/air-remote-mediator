@@ -129,7 +129,8 @@ fn send_sony_command(client: &mut Client, command: SonyCommand) {
 fn open_sony_app(client: &mut Client, app_name: &str) {
     let payload = json!({
         "entity_id": "media_player.sony_bravia",
-        "media_content_id": app_name
+        "media_content_id": app_name,
+        "media_content_type": "app",
     })
     .to_string();
     send_ha_command(client, "media_player.play_media", &payload);
