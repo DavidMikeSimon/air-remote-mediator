@@ -200,6 +200,9 @@ fn main() {
     mqtt_options.set_keep_alive(Duration::from_secs(5));
 
     let (mut client, mut connection) = Client::new(mqtt_options, 10);
+    client.subscribe(AIR_REMOTE_TOPIC, QoS::AtMostOnce).unwrap();
+    client.subscribe(TV_STATE_TOPIC, QoS::AtLeastOnce).unwrap();
+    client.subscribe(TV_INPUT_TOPIC, QoS::AtLeastOnce).unwrap();
 
     let mut state = State {
         tv_is_on: false,
@@ -242,9 +245,6 @@ fn main() {
             }
             (_, Ok(Incoming(ConnAck(_)))) => {
                 println!("Connected to MQTT");
-                client.subscribe(AIR_REMOTE_TOPIC, QoS::AtMostOnce).unwrap();
-                client.subscribe(TV_STATE_TOPIC, QoS::AtLeastOnce).unwrap();
-                client.subscribe(TV_INPUT_TOPIC, QoS::AtLeastOnce).unwrap();
             }
             (_, Ok(Incoming(_))) => {}
             (_, Ok(Outgoing(_))) => {}
