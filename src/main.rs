@@ -148,7 +148,7 @@ async fn mqtt_thread(
                     TV_INPUT_TOPIC => {
                         internal_message_tx
                             .send(InternalMessage::UpdateDennisIsInputState(
-                                "payload" == "\"HDMI 1\"",
+                                payload == "\"HDMI 1\"",
                             ))
                             .await
                             .expect("Send Dennis state message");
@@ -226,6 +226,7 @@ fn i2c_thread(
         }
 
         if let Ok(out) = i2c_out_rx.try_recv() {
+            println!("Sending I2C command: {:#04X}", out);
             i2c.write(&[out]).expect("I2C write");
         }
 
