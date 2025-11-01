@@ -3,11 +3,14 @@ name = "air-remote-mediator"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 rumqttc = "0.25.0"
 serde = { version = "1.0.193", features = ['derive'] }
-serde-hex = "0.1.0"
 serde_json = "1.0.108"
 serde_variant = "0.1.2"
+rppal = "0.22.1"
+tokio = { version = "1.47.1", features = [
+	'default',
+	'sync',
+	'rt-multi-thread',
+] }
