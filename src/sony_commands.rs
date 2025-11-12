@@ -1,7 +1,7 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
-pub enum SonyCommand {
+pub(crate) enum SonyCommand {
     Num1,
     Num2,
     Num3,
@@ -79,7 +79,7 @@ pub enum SonyCommand {
     Media,
     Prev,
     Next,
-    #[serde(rename="DpadCenter")]
+    #[serde(rename = "DpadCenter")]
     DPadCenter,
     CursorUp,
     CursorDown,
@@ -93,12 +93,12 @@ pub enum SonyCommand {
     Mode3D,
     DigitalToggle,
     DemoSurround,
-    #[serde(rename="*AD")]
+    #[serde(rename = "*AD")]
     AD,
     AudioMixUp,
     AudioMixDown,
     PhotoFrame,
-    #[serde(rename="Tv_Radio")]
+    #[serde(rename = "Tv_Radio")]
     TvRadio,
     SyncMenu,
     Hdmi1,
@@ -111,7 +111,7 @@ pub enum SonyCommand {
     OneTouchView,
     DUX,
     FootballMode,
-    #[serde(rename="iManual")]
+    #[serde(rename = "iManual")]
     IManual,
     Netflix,
     Assists,
@@ -127,11 +127,11 @@ pub enum SonyCommand {
     STBMenu,
     MuteOn,
     MuteOff,
-    #[serde(rename="AudioOutput_AudioSystem")]
+    #[serde(rename = "AudioOutput_AudioSystem")]
     AudioOutputAudioSystem,
-    #[serde(rename="AudioOutput_TVSpeaker")]
+    #[serde(rename = "AudioOutput_TVSpeaker")]
     AudioOutputTVSpeaker,
-    #[serde(rename="AudioOutput_Toggle")]
+    #[serde(rename = "AudioOutput_Toggle")]
     AudioOutputToggle,
     ApplicationLauncher,
     YouTube,
