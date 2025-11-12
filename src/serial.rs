@@ -1,9 +1,58 @@
 // Based on https://github.com/andrewrabert/sony-bravia-cli
 
-use crate::InternalMessage;
+use crate::{InternalMessage, TvState};
 use std::io::{Error, ErrorKind};
 use std::time::Duration;
 use tokio::sync::mpsc;
+
+pub(crate) fn blocking_serial_thread(
+    internal_message_tx: mpsc::Sender<InternalMessage>,
+    mut serial_out_rx: mpsc::Receiver<u8>,
+) {
+    loop {
+        println!("Connecting to Sony serial");
+
+        let mut port = serialport::new("/dev/ttyUSB0", 9600)
+            .timeout(Duration::from_millis(500))
+            .open()
+            .expect("Opening serial port");
+
+        let exit = serial_loop(&mut *port, &internal_message_tx, &mut serial_out_rx);
+        if let Err(error) = exit {
+            println!("Serial connection lost: {}", error);
+        }
+
+        std::thread::sleep(Duration::from_secs(1));
+    }
+}
+
+fn serial_loop(
+    port: &mut dyn serialport::SerialPort,
+    internal_message_tx: &mpsc::Sender<InternalMessage>,
+    serial_out_rx: &mut mpsc::Receiver<u8>,
+) -> Result<(), std::io::Error> {
+    // FIXME: The initial power query right after connecting seems
+    // unreliable.
+    loop {
+        let power = is_powered_on(&mut *port)?;
+        std::thread::sleep(Duration::from_millis(10));
+        let input = if power {
+            get_current_input(&mut *port)?
+        } else {
+            (0, 0)
+        };
+        let state = match (power, input) {
+            (false, _) => TvState::TvOff,
+            (true, (INPUT_TYPE_HDMI, 1)) => TvState::TvOnDennis,
+            (true, _) => TvState::TvOnOther,
+        };
+        internal_message_tx
+            .blocking_send(InternalMessage::UpdateTvState(state))
+            .expect("Serial TV state send");
+
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
 
 const CONTROL_REQUEST: u8 = 0x8c;
 const QUERY_REQUEST: u8 = 0x83;
@@ -71,36 +120,7 @@ fn is_powered_on(port: &mut dyn serialport::SerialPort) -> Result<bool, std::io:
     return write_command(port, args).map(|data| data[0] == 1);
 }
 
-fn serial_loop(
-    port: &mut dyn serialport::SerialPort,
-    internal_message_tx: &mpsc::Sender<InternalMessage>,
-    serial_out_rx: &mut mpsc::Receiver<u8>,
-) -> Result<(), std::io::Error> {
-    loop {
-        let start = std::time::Instant::now();
-        let power = is_powered_on(&mut *port)?;
-        println!("POWER: {:?} ({}ms)", power, start.elapsed().as_millis());
-        std::thread::sleep(Duration::from_millis(500));
-    }
-}
-
-pub(crate) fn serial_thread(
-    internal_message_tx: mpsc::Sender<InternalMessage>,
-    mut serial_out_rx: mpsc::Receiver<u8>,
-) {
-    loop {
-        println!("Connecting to Sony serial");
-
-        let mut port = serialport::new("/dev/ttyUSB0", 9600)
-            .timeout(Duration::from_millis(500))
-            .open()
-            .expect("Opening serial port");
-
-        let exit = serial_loop(&mut *port, &internal_message_tx, &mut serial_out_rx);
-        if let Err(error) = exit {
-            println!("Serial connection lost: {}", error);
-        }
-
-        std::thread::sleep(Duration::from_secs(1));
-    }
+fn get_current_input(port: &mut dyn serialport::SerialPort) -> Result<(u8, u8), std::io::Error> {
+    let args = vec![QUERY_REQUEST, CATEGORY, INPUT_SELECT_FUNCTION, 0xff, 0xff];
+    return write_command(port, args).map(|data| (data[0], data[1]));
 }

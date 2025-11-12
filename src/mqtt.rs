@@ -9,8 +9,6 @@ use tokio::sync::mpsc;
 use crate::sony_commands::SonyCommand;
 use crate::InternalMessage;
 
-const TV_STATE_TOPIC: &str = "homeassistant_statestream/media_player/sony_bravia/state";
-const TV_INPUT_TOPIC: &str = "homeassistant_statestream/media_player/sony_bravia/media_title";
 const WAKE_TOPIC: &str = "air-remote/usb-power-on";
 const HOME_ASSISTANT_RUN_TOPIC: &str = "homeassistant_cmd/run";
 
@@ -74,45 +72,19 @@ pub(crate) async fn mqtt_thread(
 ) {
     loop {
         match mqtt_eventloop.poll().await {
-            Ok(Incoming(rumqttc::Packet::Publish(message))) => {
-                let payload: String =
-                    String::from_utf8(message.payload.into()).expect("Decode UTF-8 MQTT");
-                match message.topic.as_str() {
-                    TV_STATE_TOPIC => {
-                        internal_message_tx
-                            .send(InternalMessage::UpdateTvState(payload != "off"))
-                            .await
-                            .expect("Send TV state message");
-                    }
-                    TV_INPUT_TOPIC => {
-                        internal_message_tx
-                            .send(InternalMessage::UpdateDennisIsInputState(
-                                payload == "\"HDMI 1\"",
-                            ))
-                            .await
-                            .expect("Send Dennis state message");
-                    }
-                    WAKE_TOPIC => {
-                        internal_message_tx
-                            .send(InternalMessage::WakeDennis)
-                            .await
-                            .expect("Send wake Dennis message");
-                    }
-                    _ => {
-                        println!("ERR: Message from unknown topic {:?}", message.topic);
-                    }
+            Ok(Incoming(rumqttc::Packet::Publish(message))) => match message.topic.as_str() {
+                WAKE_TOPIC => {
+                    internal_message_tx
+                        .send(InternalMessage::WakeDennis)
+                        .await
+                        .expect("Send wake Dennis message");
                 }
-            }
+                _ => {
+                    println!("ERR: Message from unknown topic {:?}", message.topic);
+                }
+            },
             Ok(Incoming(rumqttc::Packet::ConnAck(_))) => {
                 println!("Connected to MQTT");
-                mqtt_client
-                    .subscribe(TV_STATE_TOPIC, QoS::AtLeastOnce)
-                    .await
-                    .expect("Subscribe to TV state topic");
-                mqtt_client
-                    .subscribe(TV_INPUT_TOPIC, QoS::AtLeastOnce)
-                    .await
-                    .expect("Subscribe to TV input topic");
                 mqtt_client
                     .subscribe(WAKE_TOPIC, QoS::AtLeastOnce)
                     .await

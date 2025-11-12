@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 
 const ADDR_AIR_REMOTE: u16 = 0x05;
 
-pub(crate) fn i2c_thread(
+pub(crate) fn blocking_i2c_thread(
     internal_message_tx: mpsc::Sender<InternalMessage>,
     mut i2c_out_rx: mpsc::Receiver<u8>,
 ) {

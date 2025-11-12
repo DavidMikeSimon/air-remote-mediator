@@ -30,15 +30,17 @@ const HID_KEY_ARROW_LEFT: u8 = 0x50;
 const HID_KEY_ARROW_DOWN: u8 = 0x51;
 const HID_KEY_ARROW_UP: u8 = 0x52;
 
-#[derive(Debug)]
-struct State {
-    tv_is_on: bool,
-    dennis_is_current_input: bool,
+#[derive(PartialEq, Eq, Debug)]
+enum TvState {
+    Unknown,
+    TvOff,
+    TvOnDennis,
+    TvOnOther,
 }
 
+#[derive(Debug)]
 enum InternalMessage {
-    UpdateTvState(bool),
-    UpdateDennisIsInputState(bool),
+    UpdateTvState(TvState),
     WakeDennis,
     AsciiKey(u8),
     ConsumerCode(u8),
@@ -49,8 +51,8 @@ enum InternalMessage {
     InternalCheck,
 }
 
-fn get_passthru_flag_command(state: &State) -> u8 {
-    let passthru_should_be_on = state.tv_is_on && state.dennis_is_current_input;
+fn get_passthru_flag_command(state: &TvState) -> u8 {
+    let passthru_should_be_on = *state == TvState::TvOnDennis;
     return if passthru_should_be_on { b'P' } else { b'p' };
 }
 
@@ -90,20 +92,18 @@ async fn main() {
     let i2c_sender = internal_message_tx.clone();
     let (i2c_out_tx, i2c_out_rx) = mpsc::channel::<u8>(10);
     let i2c_thread_handle =
-        tokio::task::spawn_blocking(move || i2c::i2c_thread(i2c_sender, i2c_out_rx));
+        tokio::task::spawn_blocking(move || i2c::blocking_i2c_thread(i2c_sender, i2c_out_rx));
 
     let serial_sender = internal_message_tx.clone();
     let (serial_out_tx, serial_out_rx) = mpsc::channel::<u8>(10);
-    let serial_thread_handle =
-        tokio::task::spawn_blocking(move || serial::serial_thread(serial_sender, serial_out_rx));
+    let serial_thread_handle = tokio::task::spawn_blocking(move || {
+        serial::blocking_serial_thread(serial_sender, serial_out_rx)
+    });
 
     let internal_check_sender = internal_message_tx.clone();
     let internal_thread_handle = tokio::task::spawn(internal_check_thread(internal_check_sender));
 
-    let mut state = State {
-        tv_is_on: false,
-        dennis_is_current_input: false,
-    };
+    let mut state = TvState::Unknown;
 
     while let Some(msg) = internal_message_rx.recv().await {
         if i2c_thread_handle.is_finished() {
@@ -124,21 +124,15 @@ async fn main() {
         }
 
         match msg {
-            InternalMessage::UpdateTvState(tv_is_on) => {
-                state.tv_is_on = tv_is_on;
-                i2c_out_tx
-                    .send(get_passthru_flag_command(&state))
-                    .await
-                    .expect("Send passthru flag command after TV state change");
-                println!("State: {:?}", &state);
-            }
-            InternalMessage::UpdateDennisIsInputState(dennis_is_current_input) => {
-                state.dennis_is_current_input = dennis_is_current_input;
-                i2c_out_tx
-                    .send(get_passthru_flag_command(&state))
-                    .await
-                    .expect("Send passthru flag command after input state change");
-                println!("State: {:?}", &state);
+            InternalMessage::UpdateTvState(new_state) => {
+                if new_state != state {
+                    state = new_state;
+                    i2c_out_tx
+                        .send(get_passthru_flag_command(&state))
+                        .await
+                        .expect("Send passthru flag command after TV state change");
+                    println!("State: {:?}", &state);
+                }
             }
             InternalMessage::WakeDennis => {
                 i2c_out_tx
@@ -170,7 +164,7 @@ async fn main() {
                     mqtt::send_sony_command(&mqtt_client, SonyCommand::Return).await
                 }
                 CONSUMER_CODE_PLAY_PAUSE => {
-                    if !state.dennis_is_current_input {
+                    if state == TvState::TvOnOther {
                         mqtt::send_sony_command(&mqtt_client, SonyCommand::Pause).await
                     }
                 }
