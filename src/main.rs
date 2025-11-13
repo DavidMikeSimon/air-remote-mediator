@@ -14,6 +14,8 @@ use sony_commands::SonyCommand;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
+use crate::serial::SerialCommand;
+
 const HA_SCRIPT_TOGGLE_TV_AND_DENNIS: &str = "toggle_tv_and_dennis";
 const HA_SCRIPT_NOTICE_DENNIS_USB_OFF: &str = "notice_dennis_usb_readiness_off";
 const HA_SCRIPT_NOTICE_DENNIS_USB_ON: &str = "notice_dennis_usb_readiness_on";
@@ -95,7 +97,7 @@ async fn main() {
         tokio::task::spawn_blocking(move || i2c::blocking_i2c_thread(i2c_sender, i2c_out_rx));
 
     let serial_sender = internal_message_tx.clone();
-    let (serial_out_tx, serial_out_rx) = mpsc::channel::<u8>(10);
+    let (serial_out_tx, serial_out_rx) = mpsc::channel::<SerialCommand>(10);
     let serial_thread_handle = tokio::task::spawn_blocking(move || {
         serial::blocking_serial_thread(serial_sender, serial_out_rx)
     });
@@ -149,13 +151,23 @@ async fn main() {
             }
             InternalMessage::ConsumerCode(data) => match data {
                 CONSUMER_CODE_VOLUME_DOWN => {
-                    mqtt::send_media_player_command(&mqtt_client, "volume_down").await
+                    serial_out_tx
+                        .send(SerialCommand::VolumeDown)
+                        .await
+                        .expect("Send volume down command");
                 }
                 CONSUMER_CODE_VOLUME_UP => {
-                    mqtt::send_media_player_command(&mqtt_client, "volume_up").await
+                    serial_out_tx
+                        .send(SerialCommand::VolumeUp)
+                        .await
+                        .expect("Send volume up command");
                 }
                 CONSUMER_CODE_CHANNEL => {
-                    mqtt::send_sony_command(&mqtt_client, SonyCommand::Input).await
+                    mqtt::send_sony_command(&mqtt_client, SonyCommand::Input).await;
+                    // serial_out_tx
+                    //     .send(SerialCommand::InputMenu)
+                    //     .await
+                    //     .expect("Send volume up command");
                 }
                 CONSUMER_CODE_MEDIA_SELECT_HOME => {
                     mqtt::open_sony_app(&mqtt_client, "HALauncher").await

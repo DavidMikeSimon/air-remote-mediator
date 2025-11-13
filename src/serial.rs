@@ -5,9 +5,16 @@ use std::io::{Error, ErrorKind};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
+#[derive(Debug)]
+pub(crate) enum SerialCommand {
+    VolumeUp,
+    VolumeDown,
+    InputMenu,
+}
+
 pub(crate) fn blocking_serial_thread(
     internal_message_tx: mpsc::Sender<InternalMessage>,
-    mut serial_out_rx: mpsc::Receiver<u8>,
+    mut serial_out_rx: mpsc::Receiver<SerialCommand>,
 ) {
     loop {
         println!("Connecting to Sony serial");
@@ -29,26 +36,24 @@ pub(crate) fn blocking_serial_thread(
 fn serial_loop(
     port: &mut dyn serialport::SerialPort,
     internal_message_tx: &mpsc::Sender<InternalMessage>,
-    serial_out_rx: &mut mpsc::Receiver<u8>,
+    serial_out_rx: &mut mpsc::Receiver<SerialCommand>,
 ) -> Result<(), std::io::Error> {
     // FIXME: The initial power query right after connecting seems
     // unreliable.
     loop {
-        let power = is_powered_on(&mut *port)?;
-        std::thread::sleep(Duration::from_millis(10));
-        let input = if power {
-            get_current_input(&mut *port)?
-        } else {
-            (0, 0)
-        };
-        let state = match (power, input) {
-            (false, _) => TvState::TvOff,
-            (true, (INPUT_TYPE_HDMI, 1)) => TvState::TvOnDennis,
-            (true, _) => TvState::TvOnOther,
-        };
         internal_message_tx
-            .blocking_send(InternalMessage::UpdateTvState(state))
+            .blocking_send(InternalMessage::UpdateTvState(get_state(&mut *port)?))
             .expect("Serial TV state send");
+
+        while let Ok(cmd) = serial_out_rx.try_recv() {
+            println!("Sending Serial command: {:?}", cmd);
+            match cmd {
+                SerialCommand::VolumeUp => volume_up(&mut *port)?,
+                SerialCommand::VolumeDown => volume_down(&mut *port)?,
+                SerialCommand::InputMenu => sircs_command(&mut *port, SIRCS_INPUT)?,
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
 
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -64,6 +69,9 @@ const PICTURE_FUNCTION: u8 = 0x0d;
 const DISPLAY_FUNCTION: u8 = 0x0f;
 const BRIGHTNESS_CONTROL_FUNCTION: u8 = 0x24;
 const MUTING_FUNCTION: u8 = 0x06;
+const SIRCS_FUNCTION: u8 = 0x67;
+
+const SIRCS_INPUT: (u8, u8) = (0xA0, 0x42);
 
 const INPUT_TYPE_HDMI: u8 = 0x04;
 
@@ -117,10 +125,64 @@ fn write_command(
 
 fn is_powered_on(port: &mut dyn serialport::SerialPort) -> Result<bool, std::io::Error> {
     let args = vec![QUERY_REQUEST, CATEGORY, POWER_FUNCTION, 0xff, 0xff];
-    return write_command(port, args).map(|data| data[0] == 1);
+    write_command(port, args).map(|data| data.get(0) == Some(&1))
 }
 
 fn get_current_input(port: &mut dyn serialport::SerialPort) -> Result<(u8, u8), std::io::Error> {
     let args = vec![QUERY_REQUEST, CATEGORY, INPUT_SELECT_FUNCTION, 0xff, 0xff];
-    return write_command(port, args).map(|data| (data[0], data[1]));
+    write_command(port, args).map(|data| (*data.get(0).unwrap_or(&0), *data.get(1).unwrap_or(&0)))
+}
+
+fn get_state(port: &mut dyn serialport::SerialPort) -> Result<TvState, std::io::Error> {
+    let power = is_powered_on(&mut *port)?;
+    std::thread::sleep(Duration::from_millis(10));
+    let input = if power {
+        get_current_input(&mut *port)?
+    } else {
+        (0, 0)
+    };
+    return match (power, input) {
+        (false, _) => Ok(TvState::TvOff),
+        (true, (INPUT_TYPE_HDMI, 1)) => Ok(TvState::TvOnDennis),
+        (true, _) => Ok(TvState::TvOnOther),
+    };
+}
+
+fn volume_up(port: &mut dyn serialport::SerialPort) -> Result<(), std::io::Error> {
+    let args = vec![
+        CONTROL_REQUEST,
+        CATEGORY,
+        VOLUME_CONTROL_FUNCTION,
+        0x03,
+        0x00,
+        0x00,
+    ];
+    write_command(port, args).map(|_| ())
+}
+
+fn volume_down(port: &mut dyn serialport::SerialPort) -> Result<(), std::io::Error> {
+    let args = vec![
+        CONTROL_REQUEST,
+        CATEGORY,
+        VOLUME_CONTROL_FUNCTION,
+        0x03,
+        0x00,
+        0x01,
+    ];
+    write_command(port, args).map(|_| ())
+}
+
+fn sircs_command(
+    port: &mut dyn serialport::SerialPort,
+    sircs_command: (u8, u8),
+) -> Result<(), std::io::Error> {
+    let args = vec![
+        CONTROL_REQUEST,
+        CATEGORY,
+        SIRCS_FUNCTION,
+        0x03,
+        sircs_command.0,
+        sircs_command.1,
+    ];
+    write_command(port, args).map(|_| ())
 }
