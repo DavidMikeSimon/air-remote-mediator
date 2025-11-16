@@ -18,6 +18,7 @@ pub(crate) enum SerialCommand {
     CursorRight,
     Ok,
     Back,
+    NextInput,
 }
 
 pub(crate) fn blocking_serial_thread(
@@ -31,6 +32,8 @@ pub(crate) fn blocking_serial_thread(
             .timeout(Duration::from_millis(800))
             .open()
             .expect("Opening serial port");
+
+        std::thread::sleep(Duration::from_millis(500));
 
         let exit = serial_loop(&mut *port, &internal_message_tx, &mut serial_out_rx);
         if let Err(error) = exit {
@@ -46,12 +49,12 @@ fn serial_loop(
     internal_message_tx: &mpsc::Sender<InternalMessage>,
     serial_out_rx: &mut mpsc::Receiver<SerialCommand>,
 ) -> Result<(), std::io::Error> {
-    // FIXME: The initial power query right after connecting seems
-    // unreliable.
     loop {
-        internal_message_tx
-            .blocking_send(InternalMessage::UpdateTvState(get_state(&mut *port)?))
-            .expect("Serial TV state send");
+        if let Ok(state) = get_state(&mut *port) {
+            internal_message_tx
+                .blocking_send(InternalMessage::UpdateTvState(state))
+                .expect("Serial TV state send");
+        }
 
         while let Ok(cmd) = serial_out_rx.try_recv() {
             println!("Sending Serial command: {:?}", cmd);
@@ -67,6 +70,7 @@ fn serial_loop(
                 SerialCommand::CursorRight => sircs_command(&mut *port, SIRCS_CURSOR_RIGHT)?,
                 SerialCommand::Ok => sircs_command(&mut *port, SIRCS_SELECT)?,
                 SerialCommand::Back => sircs_command(&mut *port, SIRCS_RETURN)?,
+                SerialCommand::NextInput => next_input(&mut *port)?,
             }
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -117,7 +121,7 @@ fn write_request(
         return Err(Error::new(
             ErrorKind::Other,
             format!(
-                "unexpected response header {} after request {:?}",
+                "unexpected response header {} after request {:02X?}",
                 resp_buf[0], contents
             ),
         ));
@@ -126,7 +130,7 @@ fn write_request(
         return Err(Error::new(
             ErrorKind::Other,
             format!(
-                "unexpected response answer {} after request {:?}",
+                "unexpected response answer {} after request {:02X?}",
                 resp_buf[1], contents
             ),
         ));
@@ -136,25 +140,25 @@ fn write_request(
         port.read_exact(resp_data_buf.as_mut_slice())?;
         let resp_checksum = resp_data_buf.pop().ok_or(Error::new(
             ErrorKind::Other,
-            format!("empty response checksum after query {:?}", contents),
+            format!("empty response checksum after query {:02X?}", contents),
         ))?;
         resp_buf.extend(resp_data_buf.clone());
         if resp_checksum != checksum(&resp_buf) {
             return Err(Error::new(
                 ErrorKind::Other,
-                format!("invalid response checksum after query {:?}", contents),
+                format!("invalid response checksum after query {:02X?}", contents),
             ));
         }
         Ok(resp_data_buf)
     } else {
         let resp_checksum = resp_buf.pop().ok_or(Error::new(
             ErrorKind::Other,
-            format!("empty response checksum after command {:?}", contents),
+            format!("empty response checksum after command {:02X?}", contents),
         ))?;
         if resp_checksum != checksum(&resp_buf) {
             return Err(Error::new(
                 ErrorKind::Other,
-                format!("invalid response checksum after command {:?}", contents),
+                format!("invalid response checksum after command {:02X?}", contents),
             ));
         }
         Ok(vec![0; 0])
@@ -269,6 +273,16 @@ fn select_input(port: &mut dyn serialport::SerialPort, input: u8) -> Result<(), 
             input,
         ],
     )
+}
+
+fn next_input(port: &mut dyn serialport::SerialPort) -> Result<(), std::io::Error> {
+    let current_input = get_current_input(port).unwrap_or((0, 0));
+    let new_input = match current_input {
+        (4, 1) => 2,
+        (4, 2) => 4,
+        _ => 1,
+    };
+    select_input(port, new_input)
 }
 
 fn sircs_command(

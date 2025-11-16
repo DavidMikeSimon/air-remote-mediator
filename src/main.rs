@@ -170,7 +170,7 @@ async fn main() {
                 }
                 CONSUMER_CODE_CHANNEL => {
                     anti_sneaky_window_start = None; // User is deliberately selecting another input
-                    mqtt::send_sony_command(&mqtt_client, SonyCommand::Input).await;
+                    let _ = serial_out_tx.try_send(SerialCommand::NextInput);
                 }
                 CONSUMER_CODE_MEDIA_SELECT_HOME => {
                     mqtt::open_sony_app(&mqtt_client, "HALauncher").await
