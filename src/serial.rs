@@ -9,7 +9,9 @@ use tokio::sync::mpsc;
 pub(crate) enum SerialCommand {
     VolumeUp,
     VolumeDown,
-    InputMenu,
+    PowerOn,
+    PowerOff,
+    SelectInput(u8),
 }
 
 pub(crate) fn blocking_serial_thread(
@@ -20,7 +22,7 @@ pub(crate) fn blocking_serial_thread(
         println!("Connecting to Sony serial");
 
         let mut port = serialport::new("/dev/ttyUSB0", 9600)
-            .timeout(Duration::from_millis(500))
+            .timeout(Duration::from_millis(800))
             .open()
             .expect("Opening serial port");
 
@@ -50,7 +52,9 @@ fn serial_loop(
             match cmd {
                 SerialCommand::VolumeUp => volume_up(&mut *port)?,
                 SerialCommand::VolumeDown => volume_down(&mut *port)?,
-                SerialCommand::InputMenu => sircs_command(&mut *port, SIRCS_INPUT)?,
+                SerialCommand::PowerOn => power_on(&mut *port)?,
+                SerialCommand::PowerOff => power_off(&mut *port)?,
+                SerialCommand::SelectInput(input) => select_input(&mut *port, input)?,
             }
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -63,6 +67,7 @@ const CONTROL_REQUEST: u8 = 0x8c;
 const QUERY_REQUEST: u8 = 0x83;
 const CATEGORY: u8 = 0x00;
 const POWER_FUNCTION: u8 = 0x00;
+const STANDBY_FUNCTION: u8 = 0x01;
 const INPUT_SELECT_FUNCTION: u8 = 0x02;
 const VOLUME_CONTROL_FUNCTION: u8 = 0x05;
 const PICTURE_FUNCTION: u8 = 0x0d;
@@ -71,35 +76,41 @@ const BRIGHTNESS_CONTROL_FUNCTION: u8 = 0x24;
 const MUTING_FUNCTION: u8 = 0x06;
 const SIRCS_FUNCTION: u8 = 0x67;
 
-const SIRCS_INPUT: (u8, u8) = (0xA0, 0x42);
+const SIRCS_INPUT: (u8, u8) = (0x01, 0x25);
 
 const INPUT_TYPE_HDMI: u8 = 0x04;
 
 const RESPONSE_HEADER: u8 = 0x70;
-const RESPONSE_ANSWER: u8 = 0x00;
+const RESPONSE_CODE_OK: u8 = 0x00;
 
 fn checksum(command: &[u8]) -> u8 {
     let s: u8 = command.iter().fold(0u8, |acc, &b| acc.wrapping_add(b));
     s % 255
 }
 
-fn write_command(
+fn write_request(
     port: &mut dyn serialport::SerialPort,
     contents: Vec<u8>,
 ) -> Result<Vec<u8>, std::io::Error> {
     let mut vec = contents.clone();
     let c = checksum(&vec);
     vec.push(c);
-    port.write_all(&vec).unwrap();
+    port.write_all(&vec)?;
 
     let mut resp_buf = vec![0; 3];
     port.read_exact(resp_buf.as_mut_slice())?;
 
     if resp_buf[0] != RESPONSE_HEADER {
-        return Err(Error::new(ErrorKind::Other, "unexpected response header"));
+        return Err(Error::new(
+            ErrorKind::Other,
+            format!("unexpected response header {}", resp_buf[0]),
+        ));
     }
-    if resp_buf[1] != RESPONSE_ANSWER {
-        return Err(Error::new(ErrorKind::Other, "unexpected response answer"));
+    if resp_buf[1] != RESPONSE_CODE_OK {
+        return Err(Error::new(
+            ErrorKind::Other,
+            format!("unexpected response answer {}", resp_buf[1]),
+        ));
     }
     if vec[0] == QUERY_REQUEST {
         let mut resp_data_buf = vec![0; resp_buf[2] as usize];
@@ -123,14 +134,27 @@ fn write_command(
     }
 }
 
+fn write_command(
+    port: &mut dyn serialport::SerialPort,
+    contents: Vec<u8>,
+) -> Result<(), std::io::Error> {
+    write_request(port, contents).map(|_| ())
+}
+
 fn is_powered_on(port: &mut dyn serialport::SerialPort) -> Result<bool, std::io::Error> {
-    let args = vec![QUERY_REQUEST, CATEGORY, POWER_FUNCTION, 0xff, 0xff];
-    write_command(port, args).map(|data| data.get(0) == Some(&1))
+    write_request(
+        port,
+        vec![QUERY_REQUEST, CATEGORY, POWER_FUNCTION, 0xff, 0xff],
+    )
+    .map(|data| data.get(0) == Some(&1))
 }
 
 fn get_current_input(port: &mut dyn serialport::SerialPort) -> Result<(u8, u8), std::io::Error> {
-    let args = vec![QUERY_REQUEST, CATEGORY, INPUT_SELECT_FUNCTION, 0xff, 0xff];
-    write_command(port, args).map(|data| (*data.get(0).unwrap_or(&0), *data.get(1).unwrap_or(&0)))
+    write_request(
+        port,
+        vec![QUERY_REQUEST, CATEGORY, INPUT_SELECT_FUNCTION, 0xff, 0xff],
+    )
+    .map(|data| (*data.get(0).unwrap_or(&0), *data.get(1).unwrap_or(&0)))
 }
 
 fn get_state(port: &mut dyn serialport::SerialPort) -> Result<TvState, std::io::Error> {
@@ -149,40 +173,90 @@ fn get_state(port: &mut dyn serialport::SerialPort) -> Result<TvState, std::io::
 }
 
 fn volume_up(port: &mut dyn serialport::SerialPort) -> Result<(), std::io::Error> {
-    let args = vec![
-        CONTROL_REQUEST,
-        CATEGORY,
-        VOLUME_CONTROL_FUNCTION,
-        0x03,
-        0x00,
-        0x00,
-    ];
-    write_command(port, args).map(|_| ())
+    write_command(
+        port,
+        vec![
+            CONTROL_REQUEST,
+            CATEGORY,
+            VOLUME_CONTROL_FUNCTION,
+            0x03,
+            0x00,
+            0x00,
+        ],
+    )
 }
 
 fn volume_down(port: &mut dyn serialport::SerialPort) -> Result<(), std::io::Error> {
-    let args = vec![
-        CONTROL_REQUEST,
-        CATEGORY,
-        VOLUME_CONTROL_FUNCTION,
-        0x03,
-        0x00,
-        0x01,
-    ];
-    write_command(port, args).map(|_| ())
+    write_command(
+        port,
+        vec![
+            CONTROL_REQUEST,
+            CATEGORY,
+            VOLUME_CONTROL_FUNCTION,
+            0x03,
+            0x00,
+            0x01,
+        ],
+    )
+}
+
+fn power_on(port: &mut dyn serialport::SerialPort) -> Result<(), std::io::Error> {
+    write_command(
+        port,
+        vec![CONTROL_REQUEST, CATEGORY, POWER_FUNCTION, 0x02, 0x01],
+    )?;
+    for _ in 1..100 {
+        std::thread::sleep(Duration::from_millis(10));
+        if is_powered_on(&mut *port).unwrap_or(false) == true {
+            println!("Confirmed power on");
+            break;
+        }
+    }
+    for _ in 1..75 {
+        std::thread::sleep(Duration::from_millis(50));
+        if get_current_input(&mut *port).is_ok() {
+            println!("Confirmed input available");
+            break;
+        }
+    }
+    println!("Done waiting for power on");
+    Ok(())
+}
+
+fn power_off(port: &mut dyn serialport::SerialPort) -> Result<(), std::io::Error> {
+    write_command(
+        port,
+        vec![CONTROL_REQUEST, CATEGORY, POWER_FUNCTION, 0x02, 0x00],
+    )
+}
+
+fn select_input(port: &mut dyn serialport::SerialPort, input: u8) -> Result<(), std::io::Error> {
+    write_command(
+        port,
+        vec![
+            CONTROL_REQUEST,
+            CATEGORY,
+            INPUT_SELECT_FUNCTION,
+            0x03,
+            0x04,
+            input,
+        ],
+    )
 }
 
 fn sircs_command(
     port: &mut dyn serialport::SerialPort,
     sircs_command: (u8, u8),
 ) -> Result<(), std::io::Error> {
-    let args = vec![
-        CONTROL_REQUEST,
-        CATEGORY,
-        SIRCS_FUNCTION,
-        0x03,
-        sircs_command.0,
-        sircs_command.1,
-    ];
-    write_command(port, args).map(|_| ())
+    write_command(
+        port,
+        vec![
+            CONTROL_REQUEST,
+            CATEGORY,
+            SIRCS_FUNCTION,
+            0x03,
+            sircs_command.0,
+            sircs_command.1,
+        ],
+    )
 }

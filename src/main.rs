@@ -11,12 +11,11 @@ mod serial;
 mod sony_commands;
 
 use sony_commands::SonyCommand;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 use crate::serial::SerialCommand;
 
-const HA_SCRIPT_TOGGLE_TV_AND_DENNIS: &str = "toggle_tv_and_dennis";
 const HA_SCRIPT_NOTICE_DENNIS_USB_OFF: &str = "notice_dennis_usb_readiness_off";
 const HA_SCRIPT_NOTICE_DENNIS_USB_ON: &str = "notice_dennis_usb_readiness_on";
 
@@ -32,7 +31,7 @@ const HID_KEY_ARROW_LEFT: u8 = 0x50;
 const HID_KEY_ARROW_DOWN: u8 = 0x51;
 const HID_KEY_ARROW_UP: u8 = 0x52;
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum TvState {
     Unknown,
     TvOff,
@@ -106,6 +105,7 @@ async fn main() {
     let internal_thread_handle = tokio::task::spawn(internal_check_thread(internal_check_sender));
 
     let mut state = TvState::Unknown;
+    let mut anti_sneaky_window_start: Option<Instant> = None;
 
     while let Some(msg) = internal_message_rx.recv().await {
         if i2c_thread_handle.is_finished() {
@@ -129,45 +129,48 @@ async fn main() {
             InternalMessage::UpdateTvState(new_state) => {
                 if new_state != state {
                     state = new_state;
-                    i2c_out_tx
-                        .send(get_passthru_flag_command(&state))
-                        .await
-                        .expect("Send passthru flag command after TV state change");
+                    let _ = i2c_out_tx.try_send(get_passthru_flag_command(&state));
                     println!("State: {:?}", &state);
+
+                    if new_state == TvState::TvOnOther
+                        && let Some(turned_on) = anti_sneaky_window_start
+                        && Instant::now() - turned_on < Duration::from_secs(20)
+                    {
+                        println!("TV tried to sneakily switch to another input!");
+                        let _ = serial_out_tx.try_send(SerialCommand::SelectInput(1));
+                        let _ = i2c_out_tx.try_send(b'R');
+                    }
                 }
             }
             InternalMessage::WakeDennis => {
-                i2c_out_tx
-                    .send(b'R')
-                    .await
-                    .expect("Send wake Dennis command");
+                let _ = i2c_out_tx.try_send(b'R');
                 println!("Waking Dennis");
             }
             InternalMessage::OkButton => {
                 mqtt::send_sony_command(&mqtt_client, SonyCommand::Confirm).await;
             }
-            InternalMessage::PowerButton => {
-                mqtt::send_ha_script_command(&mqtt_client, HA_SCRIPT_TOGGLE_TV_AND_DENNIS).await;
-            }
+            InternalMessage::PowerButton => match state {
+                TvState::TvOff => {
+                    anti_sneaky_window_start = Some(Instant::now());
+                    let _ = serial_out_tx.try_send(SerialCommand::PowerOn);
+                    let _ = i2c_out_tx.try_send(b'R');
+                    let _ = serial_out_tx.try_send(SerialCommand::SelectInput(1));
+                }
+                TvState::TvOnDennis | TvState::TvOnOther => {
+                    let _ = serial_out_tx.try_send(SerialCommand::PowerOff);
+                }
+                TvState::Unknown => {}
+            },
             InternalMessage::ConsumerCode(data) => match data {
                 CONSUMER_CODE_VOLUME_DOWN => {
-                    serial_out_tx
-                        .send(SerialCommand::VolumeDown)
-                        .await
-                        .expect("Send volume down command");
+                    let _ = serial_out_tx.try_send(SerialCommand::VolumeDown);
                 }
                 CONSUMER_CODE_VOLUME_UP => {
-                    serial_out_tx
-                        .send(SerialCommand::VolumeUp)
-                        .await
-                        .expect("Send volume up command");
+                    let _ = serial_out_tx.try_send(SerialCommand::VolumeUp);
                 }
                 CONSUMER_CODE_CHANNEL => {
+                    anti_sneaky_window_start = None; // User is deliberately selecting another input
                     mqtt::send_sony_command(&mqtt_client, SonyCommand::Input).await;
-                    // serial_out_tx
-                    //     .send(SerialCommand::InputMenu)
-                    //     .await
-                    //     .expect("Send volume up command");
                 }
                 CONSUMER_CODE_MEDIA_SELECT_HOME => {
                     mqtt::open_sony_app(&mqtt_client, "HALauncher").await

@@ -6,8 +6,8 @@ use serde_json::json;
 use serde_variant::to_variant_name;
 use tokio::sync::mpsc;
 
-use crate::sony_commands::SonyCommand;
 use crate::InternalMessage;
+use crate::sony_commands::SonyCommand;
 
 const WAKE_TOPIC: &str = "air-remote/usb-power-on";
 const HOME_ASSISTANT_RUN_TOPIC: &str = "homeassistant_cmd/run";
@@ -50,19 +50,6 @@ pub(crate) async fn open_sony_app(client: &rumqttc::AsyncClient, app_name: &str)
     })
     .to_string();
     send_ha_command(client, "media_player.play_media", &payload).await;
-}
-
-pub(crate) async fn send_media_player_command(client: &rumqttc::AsyncClient, command: &str) {
-    let payload = json!({
-            "entity_id": "media_player.sony_bravia",
-    })
-    .to_string();
-    send_ha_command(
-        client,
-        format!("media_player.{}", command).as_ref(),
-        &payload,
-    )
-    .await;
 }
 
 pub(crate) async fn mqtt_thread(
