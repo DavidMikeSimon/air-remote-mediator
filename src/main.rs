@@ -147,7 +147,7 @@ async fn main() {
                 println!("Waking Dennis");
             }
             InternalMessage::OkButton => {
-                mqtt::send_sony_command(&mqtt_client, SonyCommand::Confirm).await;
+                let _ = serial_out_tx.try_send(SerialCommand::Ok);
             }
             InternalMessage::PowerButton => match state {
                 TvState::TvOff => {
@@ -176,7 +176,7 @@ async fn main() {
                     mqtt::open_sony_app(&mqtt_client, "HALauncher").await
                 }
                 CONSUMER_CODE_MENU_ESCAPE => {
-                    mqtt::send_sony_command(&mqtt_client, SonyCommand::Return).await
+                    let _ = serial_out_tx.try_send(SerialCommand::Back);
                 }
                 CONSUMER_CODE_PLAY_PAUSE => {
                     if state == TvState::TvOnOther {
@@ -191,15 +191,17 @@ async fn main() {
                 println!("Unhandled ascii key: {:#04X}", data);
             }
             InternalMessage::KeyCode(data) => match data {
-                HID_KEY_ARROW_UP => mqtt::send_sony_command(&mqtt_client, SonyCommand::Up).await,
+                HID_KEY_ARROW_UP => {
+                    let _ = serial_out_tx.try_send(SerialCommand::CursorUp);
+                }
                 HID_KEY_ARROW_DOWN => {
-                    mqtt::send_sony_command(&mqtt_client, SonyCommand::Down).await
+                    let _ = serial_out_tx.try_send(SerialCommand::CursorDown);
                 }
                 HID_KEY_ARROW_LEFT => {
-                    mqtt::send_sony_command(&mqtt_client, SonyCommand::Left).await
+                    let _ = serial_out_tx.try_send(SerialCommand::CursorLeft);
                 }
                 HID_KEY_ARROW_RIGHT => {
-                    mqtt::send_sony_command(&mqtt_client, SonyCommand::Right).await
+                    let _ = serial_out_tx.try_send(SerialCommand::CursorRight);
                 }
                 _ => println!("Unhandled key code: {:#04X}", data),
             },

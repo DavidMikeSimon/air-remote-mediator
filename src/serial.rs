@@ -12,6 +12,12 @@ pub(crate) enum SerialCommand {
     PowerOn,
     PowerOff,
     SelectInput(u8),
+    CursorUp,
+    CursorDown,
+    CursorLeft,
+    CursorRight,
+    Ok,
+    Back,
 }
 
 pub(crate) fn blocking_serial_thread(
@@ -55,6 +61,12 @@ fn serial_loop(
                 SerialCommand::PowerOn => power_on(&mut *port)?,
                 SerialCommand::PowerOff => power_off(&mut *port)?,
                 SerialCommand::SelectInput(input) => select_input(&mut *port, input)?,
+                SerialCommand::CursorUp => sircs_command(&mut *port, SIRCS_CURSOR_UP)?,
+                SerialCommand::CursorDown => sircs_command(&mut *port, SIRCS_CURSOR_DOWN)?,
+                SerialCommand::CursorLeft => sircs_command(&mut *port, SIRCS_CURSOR_LEFT)?,
+                SerialCommand::CursorRight => sircs_command(&mut *port, SIRCS_CURSOR_RIGHT)?,
+                SerialCommand::Ok => sircs_command(&mut *port, SIRCS_SELECT)?,
+                SerialCommand::Back => sircs_command(&mut *port, SIRCS_RETURN)?,
             }
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -67,16 +79,17 @@ const CONTROL_REQUEST: u8 = 0x8c;
 const QUERY_REQUEST: u8 = 0x83;
 const CATEGORY: u8 = 0x00;
 const POWER_FUNCTION: u8 = 0x00;
-const STANDBY_FUNCTION: u8 = 0x01;
 const INPUT_SELECT_FUNCTION: u8 = 0x02;
 const VOLUME_CONTROL_FUNCTION: u8 = 0x05;
-const PICTURE_FUNCTION: u8 = 0x0d;
-const DISPLAY_FUNCTION: u8 = 0x0f;
 const BRIGHTNESS_CONTROL_FUNCTION: u8 = 0x24;
-const MUTING_FUNCTION: u8 = 0x06;
 const SIRCS_FUNCTION: u8 = 0x67;
 
-const SIRCS_INPUT: (u8, u8) = (0x01, 0x25);
+const SIRCS_CURSOR_UP: (u8, u8) = (0x01, 0x74);
+const SIRCS_CURSOR_DOWN: (u8, u8) = (0x01, 0x75);
+const SIRCS_CURSOR_LEFT: (u8, u8) = (0x01, 0x34);
+const SIRCS_CURSOR_RIGHT: (u8, u8) = (0x01, 0x33);
+const SIRCS_SELECT: (u8, u8) = (0x01, 0x65);
+const SIRCS_RETURN: (u8, u8) = (0x97, 0x23);
 
 const INPUT_TYPE_HDMI: u8 = 0x04;
 
@@ -103,32 +116,46 @@ fn write_request(
     if resp_buf[0] != RESPONSE_HEADER {
         return Err(Error::new(
             ErrorKind::Other,
-            format!("unexpected response header {}", resp_buf[0]),
+            format!(
+                "unexpected response header {} after request {:?}",
+                resp_buf[0], contents
+            ),
         ));
     }
     if resp_buf[1] != RESPONSE_CODE_OK {
         return Err(Error::new(
             ErrorKind::Other,
-            format!("unexpected response answer {}", resp_buf[1]),
+            format!(
+                "unexpected response answer {} after request {:?}",
+                resp_buf[1], contents
+            ),
         ));
     }
     if vec[0] == QUERY_REQUEST {
         let mut resp_data_buf = vec![0; resp_buf[2] as usize];
         port.read_exact(resp_data_buf.as_mut_slice())?;
-        let resp_checksum = resp_data_buf
-            .pop()
-            .ok_or(Error::new(ErrorKind::Other, "empty response checksum"))?;
+        let resp_checksum = resp_data_buf.pop().ok_or(Error::new(
+            ErrorKind::Other,
+            format!("empty response checksum after query {:?}", contents),
+        ))?;
         resp_buf.extend(resp_data_buf.clone());
         if resp_checksum != checksum(&resp_buf) {
-            return Err(Error::new(ErrorKind::Other, "invalid response checksum"));
+            return Err(Error::new(
+                ErrorKind::Other,
+                format!("invalid response checksum after query {:?}", contents),
+            ));
         }
         Ok(resp_data_buf)
     } else {
-        let resp_checksum = resp_buf
-            .pop()
-            .ok_or(Error::new(ErrorKind::Other, "empty response checksum"))?;
+        let resp_checksum = resp_buf.pop().ok_or(Error::new(
+            ErrorKind::Other,
+            format!("empty response checksum after command {:?}", contents),
+        ))?;
         if resp_checksum != checksum(&resp_buf) {
-            return Err(Error::new(ErrorKind::Other, "invalid response checksum"));
+            return Err(Error::new(
+                ErrorKind::Other,
+                format!("invalid response checksum after command {:?}", contents),
+            ));
         }
         Ok(vec![0; 0])
     }
@@ -208,18 +235,18 @@ fn power_on(port: &mut dyn serialport::SerialPort) -> Result<(), std::io::Error>
     for _ in 1..100 {
         std::thread::sleep(Duration::from_millis(10));
         if is_powered_on(&mut *port).unwrap_or(false) == true {
-            println!("Confirmed power on");
+            println!("Serial power_on: Confirmed power on");
             break;
         }
     }
     for _ in 1..75 {
         std::thread::sleep(Duration::from_millis(50));
         if get_current_input(&mut *port).is_ok() {
-            println!("Confirmed input available");
+            println!("Serial power_on: Confirmed input available");
             break;
         }
     }
-    println!("Done waiting for power on");
+    println!("Serial power_on: Done waiting for power on");
     Ok(())
 }
 
