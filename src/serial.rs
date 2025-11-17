@@ -49,7 +49,7 @@ fn serial_loop(
     // Get an initial state reading to confirm we're connected, but throw it
     // away, since it's often inaccurate.
     loop {
-        if let (Ok(_)) = get_state(&mut *port) {
+        if let Ok(_) = get_state(&mut *port) {
             break;
         }
         std::thread::sleep(Duration::from_millis(10));

@@ -123,12 +123,13 @@ async fn main() {
                         println!("TV tried to sneakily switch to another input!");
                         let _ = serial_out_tx.try_send(SerialCommand::SelectInput(1));
                         let _ = i2c_out_tx.try_send(b'R');
+                    } else if new_state == TvState::TvOnDennis {
+                        let _ = i2c_out_tx.try_send(b'R');
                     }
                 }
             }
             InternalMessage::WakeDennis => {
                 let _ = i2c_out_tx.try_send(b'R');
-                println!("Waking Dennis");
             }
             InternalMessage::OkButton => {
                 let _ = serial_out_tx.try_send(SerialCommand::Ok);
@@ -137,7 +138,6 @@ async fn main() {
                 TvState::TvOff => {
                     anti_sneaky_window_start = Some(Instant::now());
                     let _ = serial_out_tx.try_send(SerialCommand::PowerOn);
-                    let _ = i2c_out_tx.try_send(b'R');
                     let _ = serial_out_tx.try_send(SerialCommand::SelectInput(1));
                 }
                 TvState::TvOnDennis | TvState::TvOnOther => {

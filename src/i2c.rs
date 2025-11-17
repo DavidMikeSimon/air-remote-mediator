@@ -47,7 +47,8 @@ pub(crate) fn blocking_i2c_thread(
         }
 
         while let Ok(out) = i2c_out_rx.try_recv() {
-            println!("Sending I2C command: {:#04X}", out);
+            let c = char::from(out);
+            println!("Sending I2C command: {}", c);
             i2c.write(&[out]).expect("I2C write");
         }
 
