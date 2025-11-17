@@ -14,10 +14,7 @@ use sony_commands::SonyCommand;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
-use crate::serial::SerialCommand;
-
-const HA_SCRIPT_NOTICE_DENNIS_USB_OFF: &str = "notice_dennis_usb_readiness_off";
-const HA_SCRIPT_NOTICE_DENNIS_USB_ON: &str = "notice_dennis_usb_readiness_on";
+use crate::{mqtt::MqttCommand, serial::SerialCommand};
 
 const CONSUMER_CODE_VOLUME_UP: u8 = 0xE9;
 const CONSUMER_CODE_VOLUME_DOWN: u8 = 0xEA;
@@ -69,26 +66,13 @@ async fn internal_check_thread(internal_message_tx: mpsc::Sender<InternalMessage
 
 #[tokio::main()]
 async fn main() {
-    let mut mqtt_options =
-        rumqttc::MqttOptions::new("air-remote-mediator-pi", "mqtt.sinclair.pipsimon.com", 1883);
-    mqtt_options.set_credentials(
-        "lcars",
-        std::env::var("MQTT_PASS").expect("Need env var MQTT_PASS"),
-    );
-    mqtt_options.set_keep_alive(Duration::from_secs(5));
-
-    let (mqtt_client, mqtt_connection) = rumqttc::AsyncClient::new(mqtt_options, 10);
-
     println!("Starting up");
 
     let (internal_message_tx, mut internal_message_rx) = mpsc::channel::<InternalMessage>(100);
 
     let mqtt_sender = internal_message_tx.clone();
-    let mqtt_thread_handle = tokio::task::spawn(mqtt::mqtt_thread(
-        mqtt_connection,
-        mqtt_client.clone(),
-        mqtt_sender,
-    ));
+    let (mqtt_out_tx, mqtt_out_rx) = mpsc::channel::<MqttCommand>(10);
+    let mqtt_thread_handle = tokio::task::spawn(mqtt::mqtt_thread(mqtt_sender, mqtt_out_rx));
 
     let i2c_sender = internal_message_tx.clone();
     let (i2c_out_tx, i2c_out_rx) = mpsc::channel::<u8>(10);
@@ -173,14 +157,18 @@ async fn main() {
                     let _ = serial_out_tx.try_send(SerialCommand::NextInput);
                 }
                 CONSUMER_CODE_MEDIA_SELECT_HOME => {
-                    mqtt::open_sony_app(&mqtt_client, "HALauncher").await
+                    let _ = mqtt_out_tx.try_send(MqttCommand::OpenSonyApp {
+                        app_name: "HALauncher".to_string(),
+                    });
                 }
                 CONSUMER_CODE_MENU_ESCAPE => {
                     let _ = serial_out_tx.try_send(SerialCommand::Back);
                 }
                 CONSUMER_CODE_PLAY_PAUSE => {
                     if state == TvState::TvOnOther {
-                        mqtt::send_sony_command(&mqtt_client, SonyCommand::Pause).await
+                        let _ = mqtt_out_tx.try_send(MqttCommand::SonyCommand {
+                            command: SonyCommand::Pause,
+                        });
                     }
                 }
                 _ => {
@@ -205,15 +193,9 @@ async fn main() {
                 }
                 _ => println!("Unhandled key code: {:#04X}", data),
             },
-            InternalMessage::UsbReadinessStateChange(data) => match data {
-                false => {
-                    mqtt::send_ha_script_command(&mqtt_client, HA_SCRIPT_NOTICE_DENNIS_USB_OFF)
-                        .await
-                }
-                true => {
-                    mqtt::send_ha_script_command(&mqtt_client, HA_SCRIPT_NOTICE_DENNIS_USB_ON).await
-                }
-            },
+            InternalMessage::UsbReadinessStateChange(data) => {
+                let _ = mqtt_out_tx.try_send(MqttCommand::NoticeUsbChange { state: data });
+            }
             InternalMessage::InternalCheck => {
                 // No specific action needed, this just triggers the thread
                 // handle checks above to run again.

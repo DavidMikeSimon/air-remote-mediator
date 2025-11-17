@@ -26,16 +26,7 @@ pub(crate) fn blocking_serial_thread(
     mut serial_out_rx: mpsc::Receiver<SerialCommand>,
 ) {
     loop {
-        println!("Connecting to Sony serial");
-
-        let mut port = serialport::new("/dev/ttyUSB0", 9600)
-            .timeout(Duration::from_millis(800))
-            .open()
-            .expect("Opening serial port");
-
-        std::thread::sleep(Duration::from_millis(500));
-
-        let exit = serial_loop(&mut *port, &internal_message_tx, &mut serial_out_rx);
+        let exit = serial_loop(&internal_message_tx, &mut serial_out_rx);
         if let Err(error) = exit {
             println!("Serial connection lost: {}", error);
         }
@@ -45,10 +36,16 @@ pub(crate) fn blocking_serial_thread(
 }
 
 fn serial_loop(
-    port: &mut dyn serialport::SerialPort,
     internal_message_tx: &mpsc::Sender<InternalMessage>,
     serial_out_rx: &mut mpsc::Receiver<SerialCommand>,
 ) -> Result<(), std::io::Error> {
+    println!("Connecting to Sony serial");
+
+    let mut port = serialport::new("/dev/ttyUSB0", 9600)
+        .timeout(Duration::from_millis(800))
+        .open()
+        .expect("Opening serial port");
+
     loop {
         if let Ok(state) = get_state(&mut *port) {
             internal_message_tx
