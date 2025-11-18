@@ -1,10 +1,3 @@
-/*
- * ~3 seconds: TV off: homeassistant_statestream/media_player/sony_bravia_dlna/state: unavailable
- * ~3 seconds: TV on: homeassistant_statestream/media_player/sony_bravia_dlna/state: unknown OR idle OR presumably others too
- * ~3-8 seconds: Input pick: homeassistant_statestream/media_player/sony_bravia/media_title: "HDMI 1" or "HDMI 2" or "HDMI 3/ARC" or "HDMI 4"
- * ~3-8 seconds: homeassistant_statestream/media_player/sony_bravia/media_title: "Smart TV"
- */
-
 mod i2c;
 mod mqtt;
 mod serial;
@@ -137,6 +130,7 @@ async fn main() {
             InternalMessage::PowerButton => match state {
                 TvState::TvOff => {
                     anti_sneaky_window_start = Some(Instant::now());
+                    let _ = i2c_out_tx.try_send(b'R');
                     let _ = serial_out_tx.try_send(SerialCommand::PowerOn);
                     let _ = serial_out_tx.try_send(SerialCommand::SelectInput(1));
                 }
