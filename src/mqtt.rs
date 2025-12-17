@@ -6,12 +6,10 @@ use rumqttc::{
     QoS,
 };
 use serde_json::json;
-use serde_variant::to_variant_name;
 use tokio::select;
 use tokio::sync::mpsc;
 
 use crate::InternalMessage;
-use crate::sony_commands::SonyCommand;
 
 const WAKE_TOPIC: &str = "air-remote/usb-power-on";
 const HOME_ASSISTANT_RUN_TOPIC: &str = "homeassistant_cmd/run";
@@ -21,8 +19,6 @@ const HA_SCRIPT_NOTICE_DENNIS_USB_ON: &str = "notice_dennis_usb_readiness_on";
 
 #[derive(Clone, Debug)]
 pub(crate) enum MqttCommand {
-    SonyCommand { command: SonyCommand },
-    OpenSonyApp { app_name: String },
     NoticeUsbChange { state: bool },
 }
 
@@ -84,12 +80,6 @@ async fn mqtt_loop(
             mqtt_command = mqtt_out_rx.recv() => {
                 match mqtt_command {
                     None => return Ok(()),
-                    Some(MqttCommand::SonyCommand { command }) => {
-                        send_sony_command(&mqtt_client, command).await.map_err(|err| err.to_string())?
-                    }
-                    Some(MqttCommand::OpenSonyApp { app_name }) => {
-                        open_sony_app(&mqtt_client, &app_name).await.map_err(|err| err.to_string())?
-                    }
                     Some(MqttCommand::NoticeUsbChange { state }) => {
                         send_ha_script_command(&mqtt_client,
                             match state {
@@ -129,26 +119,4 @@ async fn send_ha_script_command(
     })
     .to_string();
     send_ha_command(client, "script.turn_on", &payload).await
-}
-
-async fn send_sony_command(
-    client: &rumqttc::AsyncClient,
-    command: SonyCommand,
-) -> Result<(), ClientError> {
-    let payload = json!({
-            "entity_id": "remote.sony_bravia",
-            "command": to_variant_name(&command).expect("Sony command to variant")
-    })
-    .to_string();
-    send_ha_command(client, "remote.send_command", &payload).await
-}
-
-async fn open_sony_app(client: &rumqttc::AsyncClient, app_name: &str) -> Result<(), ClientError> {
-    let payload = json!({
-            "entity_id": "media_player.sony_bravia",
-            "media_content_id": app_name,
-            "media_content_type": "app",
-    })
-    .to_string();
-    send_ha_command(client, "media_player.play_media", &payload).await
 }

@@ -1,9 +1,7 @@
 mod i2c;
 mod mqtt;
 mod serial;
-mod sony_commands;
 
-use sony_commands::SonyCommand;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
@@ -164,11 +162,7 @@ async fn main() {
                     let _ = serial_out_tx.try_send(SerialCommand::Back);
                 }
                 CONSUMER_CODE_PLAY_PAUSE => {
-                    if state == TvState::TvOnOther {
-                        let _ = mqtt_out_tx.try_send(MqttCommand::SonyCommand {
-                            command: SonyCommand::Pause,
-                        });
-                    }
+                    // Deliberately ignored
                 }
                 _ => {
                     println!("Unhandled consumer code: {:#04X}", data);
