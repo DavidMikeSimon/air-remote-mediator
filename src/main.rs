@@ -43,9 +43,11 @@ enum InternalMessage {
 }
 
 fn get_passthru_flag_command(state: &TvState) -> u8 {
-    return b'P'; // Force passthru on until we figure out the LG stuff
-    // let passthru_should_be_on = *state == TvState::TvOnDennis;
-    // return if passthru_should_be_on { b'P' } else { b'p' };
+    let passthru_should_be_on = match *state {
+        TvState::TvOnDennis | TvState::Unknown => true,
+        _ => false,
+    };
+    return if passthru_should_be_on { b'P' } else { b'p' };
 }
 
 async fn internal_check_thread(internal_message_tx: mpsc::Sender<InternalMessage>) {
