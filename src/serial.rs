@@ -28,7 +28,7 @@ pub(crate) fn blocking_serial_thread(
     loop {
         let exit = serial_loop(&internal_message_tx, &mut serial_out_rx);
         if let Err(error) = exit {
-            println!("Serial connection lost: {}", error);
+            println!("Serial: Connection lost: {}", error);
         }
 
         std::thread::sleep(Duration::from_secs(1));
@@ -39,7 +39,7 @@ fn serial_loop(
     internal_message_tx: &mpsc::Sender<InternalMessage>,
     serial_out_rx: &mut mpsc::Receiver<SerialCommand>,
 ) -> Result<(), std::io::Error> {
-    println!("Connecting to Sony serial");
+    println!("Serial: Connecting");
 
     let mut port = serialport::new("/dev/ttyUSB0", 9600)
         .timeout(Duration::from_millis(800))
@@ -55,6 +55,8 @@ fn serial_loop(
         std::thread::sleep(Duration::from_millis(10));
     }
 
+    println!("Serial: Ready");
+
     loop {
         if let Ok(state) = get_state(&mut *port) {
             internal_message_tx
@@ -63,7 +65,7 @@ fn serial_loop(
         }
 
         while let Ok(cmd) = serial_out_rx.try_recv() {
-            println!("Sending Serial command: {:?}", cmd);
+            println!("Serial: Command {:?}", cmd);
             match cmd {
                 SerialCommand::VolumeUp => volume_up(&mut *port)?,
                 SerialCommand::VolumeDown => volume_down(&mut *port)?,
@@ -245,7 +247,7 @@ fn power_on(port: &mut dyn serialport::SerialPort) -> Result<(), std::io::Error>
     for _ in 1..100 {
         std::thread::sleep(Duration::from_millis(10));
         if is_powered_on(&mut *port).unwrap_or(false) == true {
-            println!("Serial power_on: Confirmed power on");
+            println!("Serial: power_on: Confirmed power on");
             break;
         }
     }
@@ -256,7 +258,7 @@ fn power_on(port: &mut dyn serialport::SerialPort) -> Result<(), std::io::Error>
             break;
         }
     }
-    println!("Serial power_on: Done waiting for power on");
+    println!("Serial: power_on: Done waiting for power on");
     Ok(())
 }
 

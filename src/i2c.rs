@@ -9,6 +9,8 @@ pub(crate) fn blocking_i2c_thread(
     internal_message_tx: mpsc::Sender<InternalMessage>,
     mut i2c_out_rx: mpsc::Receiver<u8>,
 ) {
+    println!("I2C: Connecting");
+
     let mut i2c = I2c::new().expect("I2C init");
 
     i2c.set_slave_address(ADDR_AIR_REMOTE)
@@ -25,6 +27,8 @@ pub(crate) fn blocking_i2c_thread(
             break;
         }
     }
+
+    println!("I2C: Ready");
 
     // Now we can actually process events
     loop {
@@ -48,7 +52,7 @@ pub(crate) fn blocking_i2c_thread(
 
         while let Ok(out) = i2c_out_rx.try_recv() {
             let c = char::from(out);
-            println!("Sending I2C command: {}", c);
+            println!("I2C: Command {}", c);
             i2c.write(&[out]).expect("I2C write");
         }
 

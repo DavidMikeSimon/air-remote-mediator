@@ -52,6 +52,7 @@ async fn mqtt_loop(
     );
     mqtt_options.set_keep_alive(Duration::from_secs(5));
 
+    println!("MQTT: Connecting");
     let (mqtt_client, mut mqtt_eventloop) = rumqttc::AsyncClient::new(mqtt_options, 10);
 
     loop {
@@ -70,7 +71,7 @@ async fn mqtt_loop(
                         }
                     },
                     Incoming(rumqttc::Packet::ConnAck(_)) => {
-                        println!("Connected to MQTT");
+                        println!("MQTT: Ready");
                         mqtt_client
                             .subscribe(WAKE_TOPIC, QoS::AtLeastOnce)
                             .await
