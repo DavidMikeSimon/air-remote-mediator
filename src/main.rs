@@ -16,8 +16,8 @@ const CONSUMER_CODE_CHANNEL: u8 = 0x86;
 const CONSUMER_CODE_MEDIA_SELECT_HOME: u8 = 0x9A;
 const CONSUMER_CODE_PLAY_PAUSE: u8 = 0xCD;
 
-const HID_KEY_ARROW_RIGHT: u8 = 0x4F;
-const HID_KEY_ARROW_LEFT: u8 = 0x50;
+const HID_KEY_ARROW_RIGHT: u8 = 0x50;
+const HID_KEY_ARROW_LEFT: u8 = 0x4F;
 const HID_KEY_ARROW_DOWN: u8 = 0x51;
 const HID_KEY_ARROW_UP: u8 = 0x52;
 
@@ -74,11 +74,11 @@ async fn main() {
     let i2c_thread_handle =
         tokio::task::spawn_blocking(move || i2c::blocking_i2c_thread(i2c_sender, i2c_out_rx));
 
-    // let serial_sender = internal_message_tx.clone();
-    // let (serial_out_tx, serial_out_rx) = mpsc::channel::<SerialCommand>(10);
-    // let serial_thread_handle = tokio::task::spawn_blocking(move || {
-    //     serial::blocking_serial_thread(serial_sender, serial_out_rx)
-    // });
+    let serial_sender = internal_message_tx.clone();
+    let (serial_out_tx, serial_out_rx) = mpsc::channel::<SerialCommand>(10);
+    let serial_thread_handle = tokio::task::spawn_blocking(move || {
+        serial::blocking_serial_thread(serial_sender, serial_out_rx)
+    });
 
     let internal_check_sender = internal_message_tx.clone();
     let internal_thread_handle = tokio::task::spawn(internal_check_thread(internal_check_sender));
@@ -97,10 +97,10 @@ async fn main() {
             eprintln!("Error: MQTT thread died");
             return;
         }
-        // if serial_thread_handle.is_finished() {
-        //     eprintln!("Error: Serial thread died");
-        //     return;
-        // }
+        if serial_thread_handle.is_finished() {
+            eprintln!("Error: Serial thread died");
+            return;
+        }
         if internal_thread_handle.is_finished() {
             eprintln!("Error: Internal check thread died");
             return;
@@ -113,12 +113,13 @@ async fn main() {
                     let _ = i2c_out_tx.try_send(get_passthru_flag_command(&state));
                     println!("State: {:?}", &state);
 
+                    // TODO: Do we even need the anti-sneaky feature anymore?
                     if new_state == TvState::TvOnOther
                         && let Some(turned_on) = anti_sneaky_window_start
                         && Instant::now() - turned_on < Duration::from_secs(20)
                     {
                         println!("TV tried to sneakily switch to another input!");
-                        // let _ = serial_out_tx.try_send(SerialCommand::SelectInput(1));
+                        let _ = serial_out_tx.try_send(SerialCommand::SelectInput(1));
                         let _ = i2c_out_tx.try_send(b'R');
                     } else if new_state == TvState::TvOnDennis {
                         let _ = i2c_out_tx.try_send(b'R');
@@ -129,38 +130,36 @@ async fn main() {
                 let _ = i2c_out_tx.try_send(b'R');
             }
             InternalMessage::OkButton => {
-                // let _ = serial_out_tx.try_send(SerialCommand::Ok);
+                let _ = serial_out_tx.try_send(SerialCommand::Ok);
             }
             InternalMessage::PowerButton => match state {
                 TvState::TvOff => {
                     anti_sneaky_window_start = Some(Instant::now());
                     let _ = i2c_out_tx.try_send(b'R');
-                    // let _ = serial_out_tx.try_send(SerialCommand::PowerOn);
-                    // let _ = serial_out_tx.try_send(SerialCommand::SelectInput(1));
+                    let _ = serial_out_tx.try_send(SerialCommand::PowerOn);
+                    let _ = serial_out_tx.try_send(SerialCommand::SelectInput(1));
                 }
                 TvState::TvOnDennis | TvState::TvOnOther => {
-                    // let _ = serial_out_tx.try_send(SerialCommand::PowerOff);
+                    let _ = serial_out_tx.try_send(SerialCommand::PowerOff);
                 }
                 TvState::Unknown => {}
             },
             InternalMessage::ConsumerCode(data) => match data {
                 CONSUMER_CODE_VOLUME_DOWN => {
-                    // let _ = serial_out_tx.try_send(SerialCommand::VolumeDown);
+                    let _ = serial_out_tx.try_send(SerialCommand::VolumeDown);
                 }
                 CONSUMER_CODE_VOLUME_UP => {
-                    // let _ = serial_out_tx.try_send(SerialCommand::VolumeUp);
+                    let _ = serial_out_tx.try_send(SerialCommand::VolumeUp);
                 }
                 CONSUMER_CODE_CHANNEL => {
                     anti_sneaky_window_start = None; // User is deliberately selecting another input
-                    // let _ = serial_out_tx.try_send(SerialCommand::NextInput);
+                    let _ = serial_out_tx.try_send(SerialCommand::Input);
                 }
                 CONSUMER_CODE_MEDIA_SELECT_HOME => {
-                    let _ = mqtt_out_tx.try_send(MqttCommand::OpenSonyApp {
-                        app_name: "HALauncher".to_string(),
-                    });
+                    let _ = serial_out_tx.try_send(SerialCommand::Settings);
                 }
                 CONSUMER_CODE_MENU_ESCAPE => {
-                    // let _ = serial_out_tx.try_send(SerialCommand::Back);
+                    let _ = serial_out_tx.try_send(SerialCommand::Back);
                 }
                 CONSUMER_CODE_PLAY_PAUSE => {
                     if state == TvState::TvOnOther {
@@ -178,16 +177,16 @@ async fn main() {
             }
             InternalMessage::KeyCode(data) => match data {
                 HID_KEY_ARROW_UP => {
-                    // let _ = serial_out_tx.try_send(SerialCommand::CursorUp);
+                    let _ = serial_out_tx.try_send(SerialCommand::CursorUp);
                 }
                 HID_KEY_ARROW_DOWN => {
-                    // let _ = serial_out_tx.try_send(SerialCommand::CursorDown);
+                    let _ = serial_out_tx.try_send(SerialCommand::CursorDown);
                 }
                 HID_KEY_ARROW_LEFT => {
-                    // let _ = serial_out_tx.try_send(SerialCommand::CursorLeft);
+                    let _ = serial_out_tx.try_send(SerialCommand::CursorLeft);
                 }
                 HID_KEY_ARROW_RIGHT => {
-                    // let _ = serial_out_tx.try_send(SerialCommand::CursorRight);
+                    let _ = serial_out_tx.try_send(SerialCommand::CursorRight);
                 }
                 _ => println!("Unhandled key code: {:#04X}", data),
             },
