@@ -5,7 +5,7 @@ mod serial;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
-use crate::{mqtt::MqttCommand, serial::SerialCommand};
+use crate::{i2c::I2CCommand, mqtt::MqttCommand, serial::SerialCommand};
 
 const CONSUMER_CODE_VOLUME_UP: u8 = 0xE9;
 const CONSUMER_CODE_VOLUME_DOWN: u8 = 0xEA;
@@ -27,6 +27,13 @@ enum TvState {
     TvOnOther,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum DennisState {
+    Unknown,
+    Off,
+    On,
+}
+
 #[derive(Debug)]
 enum InternalMessage {
     UpdateTvState(TvState),
@@ -40,12 +47,11 @@ enum InternalMessage {
     InternalCheck,
 }
 
-fn get_passthru_flag_command(state: &TvState) -> u8 {
-    let passthru_should_be_on = match *state {
-        TvState::TvOnDennis | TvState::Unknown => true,
-        _ => false,
+fn get_passthru_flag_command(state: &TvState) -> I2CCommand {
+    return match *state {
+        TvState::TvOnDennis | TvState::Unknown => I2CCommand::PassthruEnable,
+        TvState::TvOff | TvState::TvOnOther => I2CCommand::PassthruDisable,
     };
-    return if passthru_should_be_on { b'P' } else { b'p' };
 }
 
 async fn internal_check_thread(internal_message_tx: mpsc::Sender<InternalMessage>) {
@@ -54,8 +60,7 @@ async fn internal_check_thread(internal_message_tx: mpsc::Sender<InternalMessage
             .send(InternalMessage::InternalCheck)
             .await
             .expect("Internal ping send");
-        // FIXME: Returning from main doesn't actually exit the program!
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
 
@@ -70,7 +75,7 @@ async fn main() {
     let mqtt_thread_handle = tokio::task::spawn(mqtt::mqtt_thread(mqtt_sender, mqtt_out_rx));
 
     let i2c_sender = internal_message_tx.clone();
-    let (i2c_out_tx, i2c_out_rx) = mpsc::channel::<u8>(10);
+    let (i2c_out_tx, i2c_out_rx) = mpsc::channel::<I2CCommand>(10);
     let i2c_thread_handle =
         tokio::task::spawn_blocking(move || i2c::blocking_i2c_thread(i2c_sender, i2c_out_rx));
 
@@ -83,9 +88,12 @@ async fn main() {
     let internal_check_sender = internal_message_tx.clone();
     let internal_thread_handle = tokio::task::spawn(internal_check_thread(internal_check_sender));
 
-    let mut state = TvState::Unknown;
+    let mut tv_state = TvState::Unknown;
+    let mut dennis_state = DennisState::Unknown;
     let mut anti_sneaky_window_start: Option<Instant> = None;
-    let _ = i2c_out_tx.try_send(get_passthru_flag_command(&state));
+    let mut last_auto_off_state_update = Instant::now();
+
+    let _ = i2c_out_tx.try_send(get_passthru_flag_command(&tv_state));
 
     while let Some(msg) = internal_message_rx.recv().await {
         if i2c_thread_handle.is_finished() {
@@ -106,12 +114,21 @@ async fn main() {
             return;
         }
 
+        if tv_state == TvState::TvOff
+            && dennis_state == DennisState::On
+            && Instant::now() - last_auto_off_state_update > Duration::from_secs(2)
+        {
+            let _ = i2c_out_tx.try_send(I2CCommand::Sleep);
+            last_auto_off_state_update = Instant::now();
+        }
+
         match msg {
             InternalMessage::UpdateTvState(new_state) => {
-                if new_state != state {
-                    state = new_state;
-                    let _ = i2c_out_tx.try_send(get_passthru_flag_command(&state));
-                    println!("State: {:?}", &state);
+                if new_state != tv_state {
+                    tv_state = new_state;
+                    last_auto_off_state_update = Instant::now();
+                    let _ = i2c_out_tx.try_send(get_passthru_flag_command(&tv_state));
+                    println!("TV State: {:?}", &tv_state);
 
                     // TODO: Do we even need the anti-sneaky feature anymore?
                     if new_state == TvState::TvOnOther
@@ -120,22 +137,22 @@ async fn main() {
                     {
                         println!("TV tried to sneakily switch to another input!");
                         let _ = serial_out_tx.try_send(SerialCommand::SelectInput(1));
-                        let _ = i2c_out_tx.try_send(b'R');
+                        let _ = i2c_out_tx.try_send(I2CCommand::UsbWake);
                     } else if new_state == TvState::TvOnDennis {
-                        let _ = i2c_out_tx.try_send(b'R');
+                        let _ = i2c_out_tx.try_send(I2CCommand::UsbWake);
                     }
                 }
             }
             InternalMessage::WakeDennis => {
-                let _ = i2c_out_tx.try_send(b'R');
+                let _ = i2c_out_tx.try_send(I2CCommand::UsbWake);
             }
             InternalMessage::OkButton => {
                 let _ = serial_out_tx.try_send(SerialCommand::Ok);
             }
-            InternalMessage::PowerButton => match state {
+            InternalMessage::PowerButton => match tv_state {
                 TvState::TvOff => {
                     anti_sneaky_window_start = Some(Instant::now());
-                    let _ = i2c_out_tx.try_send(b'R');
+                    let _ = i2c_out_tx.try_send(I2CCommand::UsbWake);
                     let _ = serial_out_tx.try_send(SerialCommand::PowerOn);
                     let _ = serial_out_tx.try_send(SerialCommand::SelectInput(1));
                 }
@@ -187,6 +204,11 @@ async fn main() {
                 _ => println!("Unhandled key code: {:#04X}", data),
             },
             InternalMessage::UsbReadinessStateChange(data) => {
+                dennis_state = match data {
+                    false => DennisState::Off,
+                    true => DennisState::On,
+                };
+                println!("Dennis State: {:?}", dennis_state);
                 let _ = mqtt_out_tx.try_send(MqttCommand::NoticeUsbChange { state: data });
             }
             InternalMessage::InternalCheck => {

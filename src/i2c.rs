@@ -5,9 +5,17 @@ use tokio::sync::mpsc;
 
 const ADDR_AIR_REMOTE: u16 = 0x05;
 
+#[derive(Debug)]
+pub(crate) enum I2CCommand {
+    UsbWake,
+    Sleep,
+    PassthruEnable,
+    PassthruDisable,
+}
+
 pub(crate) fn blocking_i2c_thread(
     internal_message_tx: mpsc::Sender<InternalMessage>,
-    mut i2c_out_rx: mpsc::Receiver<u8>,
+    mut i2c_out_rx: mpsc::Receiver<I2CCommand>,
 ) {
     println!("I2C: Connecting");
 
@@ -51,9 +59,14 @@ pub(crate) fn blocking_i2c_thread(
         }
 
         while let Ok(out) = i2c_out_rx.try_recv() {
-            let c = char::from(out);
-            println!("I2C: Command {}", c);
-            i2c.write(&[out]).expect("I2C write");
+            let c = match out {
+                I2CCommand::UsbWake => b'R',
+                I2CCommand::Sleep => b'r',
+                I2CCommand::PassthruDisable => b'p',
+                I2CCommand::PassthruEnable => b'P',
+            };
+            println!("I2C: Command {:?} '{}'", out, c as char);
+            i2c.write(&[c]).expect("I2C write");
         }
 
         std::thread::sleep(Duration::from_millis(10));
