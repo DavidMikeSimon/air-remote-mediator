@@ -91,7 +91,7 @@ async fn main() {
     let mut tv_state = TvState::Unknown;
     let mut dennis_state = DennisState::Unknown;
     let mut anti_sneaky_window_start: Option<Instant> = None;
-    let mut last_auto_off_state_update = Instant::now();
+    let mut last_auto_sleep = Instant::now();
 
     let _ = i2c_out_tx.try_send(get_passthru_flag_command(&tv_state));
 
@@ -114,19 +114,20 @@ async fn main() {
             return;
         }
 
-        if tv_state == TvState::TvOff
+        if (tv_state == TvState::TvOff || tv_state == TvState::TvOnOther)
             && dennis_state == DennisState::On
-            && Instant::now() - last_auto_off_state_update > Duration::from_secs(2)
+            && Instant::now() - last_auto_sleep > Duration::from_secs(10)
         {
+            println!("Dennis was left on, sending sleep command");
             let _ = i2c_out_tx.try_send(I2CCommand::Sleep);
-            last_auto_off_state_update = Instant::now();
+            last_auto_sleep = Instant::now();
         }
 
         match msg {
             InternalMessage::UpdateTvState(new_state) => {
                 if new_state != tv_state {
                     tv_state = new_state;
-                    last_auto_off_state_update = Instant::now();
+                    last_auto_sleep = Instant::now(); // Reset the auto sleep timer
                     let _ = i2c_out_tx.try_send(get_passthru_flag_command(&tv_state));
                     println!("TV State: {:?}", &tv_state);
 
@@ -149,18 +150,22 @@ async fn main() {
             InternalMessage::OkButton => {
                 let _ = serial_out_tx.try_send(SerialCommand::Ok);
             }
-            InternalMessage::PowerButton => match tv_state {
-                TvState::TvOff => {
-                    anti_sneaky_window_start = Some(Instant::now());
-                    let _ = i2c_out_tx.try_send(I2CCommand::UsbWake);
-                    let _ = serial_out_tx.try_send(SerialCommand::PowerOn);
-                    let _ = serial_out_tx.try_send(SerialCommand::SelectInput(1));
+            InternalMessage::PowerButton => {
+                last_auto_sleep = Instant::now(); // Reset the auto sleep timer
+                match tv_state {
+                    TvState::TvOff => {
+                        anti_sneaky_window_start = Some(Instant::now());
+                        let _ = i2c_out_tx.try_send(I2CCommand::UsbWake);
+                        let _ = serial_out_tx.try_send(SerialCommand::PowerOn);
+                        let _ = serial_out_tx.try_send(SerialCommand::SelectInput(1));
+                    }
+                    TvState::TvOnDennis | TvState::TvOnOther => {
+                        let _ = i2c_out_tx.try_send(I2CCommand::Sleep);
+                        let _ = serial_out_tx.try_send(SerialCommand::PowerOff);
+                    }
+                    TvState::Unknown => {}
                 }
-                TvState::TvOnDennis | TvState::TvOnOther => {
-                    let _ = serial_out_tx.try_send(SerialCommand::PowerOff);
-                }
-                TvState::Unknown => {}
-            },
+            }
             InternalMessage::ConsumerCode(data) => match data {
                 CONSUMER_CODE_VOLUME_DOWN => {
                     let _ = serial_out_tx.try_send(SerialCommand::VolumeDown);

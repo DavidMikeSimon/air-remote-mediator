@@ -47,6 +47,11 @@ fn serial_loop(
         .open()
         .expect("Opening serial port");
 
+    while port.bytes_to_read()? > 0 {
+        // Throw away any lingering response data
+        port.read(&mut [0; 32])?;
+    }
+
     // Get an initial state reading to confirm we're connected.
     for _ in 1..100 {
         if let Ok(_) = get_state(&mut *port) {
@@ -118,17 +123,18 @@ fn run_command(
 
     let mut resp_buf = [0; 24];
     let chars_read = port.read(&mut resp_buf)?;
+    let response = String::from_utf8_lossy(&resp_buf[0..chars_read]);
     if chars_read != 10 {
         return Err(Error::new(
             ErrorKind::Other,
             format!(
-                "Sent '{}', expected 10-byte response, got {} bytes",
+                "Sent '{}', expected 10-byte response, got {} bytes, '{}'",
                 cmd.to_string().trim(),
-                chars_read
+                chars_read,
+                response.trim(),
             ),
         ));
     }
-    let response = String::from_utf8_lossy(&resp_buf[0..chars_read]);
     if &response[5..7] != "OK" {
         return Err(Error::new(
             ErrorKind::Other,
@@ -195,26 +201,33 @@ fn get_state(port: &mut dyn serialport::SerialPort) -> Result<TvState, std::io::
 
 fn power_on(port: &mut dyn serialport::SerialPort) -> Result<(), std::io::Error> {
     run_command(port, COMMAND_POWER, 0x01)?;
-    // for _ in 1..100 {
-    //     std::thread::sleep(Duration::from_millis(10));
-    //     if is_powered_on(&mut *port).unwrap_or(false) == true {
-    //         println!("Serial: power_on: Confirmed power on");
-    //         break;
-    //     }
-    // }
-    // for _ in 1..75 {
-    //     std::thread::sleep(Duration::from_millis(50));
-    //     if get_current_input(&mut *port).is_ok() {
-    //         println!("Serial power_on: Confirmed input available");
-    //         break;
-    //     }
-    // }
+    for _ in 1..100 {
+        std::thread::sleep(Duration::from_millis(10));
+        if is_powered_on(&mut *port).unwrap_or(false) == true {
+            println!("Serial: power_on: Confirmed power on");
+            break;
+        }
+    }
+    for _ in 1..75 {
+        std::thread::sleep(Duration::from_millis(50));
+        if get_current_hdmi_input(&mut *port).is_ok() {
+            println!("Serial power_on: Confirmed input available");
+            break;
+        }
+    }
     println!("Serial: power_on: Done waiting for power on");
     Ok(())
 }
 
 fn power_off(port: &mut dyn serialport::SerialPort) -> Result<(), std::io::Error> {
     run_command(port, COMMAND_POWER, 0x00)?;
+    for _ in 1..400 {
+        std::thread::sleep(Duration::from_millis(10));
+        if is_powered_on(&mut *port).unwrap_or(true) == false {
+            println!("Serial: power_off: Confirmed power off");
+            break;
+        }
+    }
     Ok(())
 }
 

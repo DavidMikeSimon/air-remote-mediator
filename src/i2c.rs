@@ -29,7 +29,7 @@ pub(crate) fn blocking_i2c_thread(
 
     // Drain any events that were backed up and throw them away, they're probably no longer relevant
     loop {
-        i2c.read(&mut buf).expect("I2C read");
+        i2c.read(&mut buf).expect("I2C read to throw away");
         let [code, _data] = buf;
         if code == 0 {
             break;
@@ -37,6 +37,8 @@ pub(crate) fn blocking_i2c_thread(
     }
 
     println!("I2C: Ready");
+
+    i2c.write(&[b'I']).expect("I2C write init command");
 
     // Now we can actually process events
     loop {
@@ -62,8 +64,8 @@ pub(crate) fn blocking_i2c_thread(
             let c = match out {
                 I2CCommand::UsbWake => b'R',
                 I2CCommand::Sleep => b'r',
-                I2CCommand::PassthruDisable => b'p',
                 I2CCommand::PassthruEnable => b'P',
+                I2CCommand::PassthruDisable => b'p',
             };
             println!("I2C: Command {:?} '{}'", out, c as char);
             i2c.write(&[c]).expect("I2C write");
