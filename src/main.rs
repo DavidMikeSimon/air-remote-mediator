@@ -90,7 +90,6 @@ async fn main() {
 
     let mut tv_state = TvState::Unknown;
     let mut dennis_state = DennisState::Unknown;
-    let mut anti_sneaky_window_start: Option<Instant> = None;
     let mut last_auto_sleep = Instant::now();
 
     let _ = i2c_out_tx.try_send(get_passthru_flag_command(&tv_state));
@@ -131,20 +130,13 @@ async fn main() {
                     let _ = i2c_out_tx.try_send(get_passthru_flag_command(&tv_state));
                     println!("TV State: {:?}", &tv_state);
 
-                    // TODO: Do we even need the anti-sneaky feature anymore?
-                    if new_state == TvState::TvOnOther
-                        && let Some(turned_on) = anti_sneaky_window_start
-                        && Instant::now() - turned_on < Duration::from_secs(20)
-                    {
-                        println!("TV tried to sneakily switch to another input!");
-                        let _ = serial_out_tx.try_send(SerialCommand::SelectInput(1));
-                        let _ = i2c_out_tx.try_send(I2CCommand::UsbWake);
-                    } else if new_state == TvState::TvOnDennis {
+                    if new_state == TvState::TvOnDennis {
                         let _ = i2c_out_tx.try_send(I2CCommand::UsbWake);
                     }
                 }
             }
             InternalMessage::WakeDennis => {
+                last_auto_sleep = Instant::now(); // Reset the auto sleep timer
                 let _ = i2c_out_tx.try_send(I2CCommand::UsbWake);
             }
             InternalMessage::OkButton => {
@@ -154,7 +146,6 @@ async fn main() {
                 last_auto_sleep = Instant::now(); // Reset the auto sleep timer
                 match tv_state {
                     TvState::TvOff => {
-                        anti_sneaky_window_start = Some(Instant::now());
                         let _ = i2c_out_tx.try_send(I2CCommand::UsbWake);
                         let _ = serial_out_tx.try_send(SerialCommand::PowerOn);
                         let _ = serial_out_tx.try_send(SerialCommand::SelectInput(1));
@@ -174,7 +165,6 @@ async fn main() {
                     let _ = serial_out_tx.try_send(SerialCommand::VolumeUp);
                 }
                 CONSUMER_CODE_CHANNEL => {
-                    anti_sneaky_window_start = None; // User is deliberately selecting another input
                     let _ = serial_out_tx.try_send(SerialCommand::Input);
                 }
                 CONSUMER_CODE_MEDIA_SELECT_HOME => {
@@ -190,8 +180,8 @@ async fn main() {
                     println!("Unhandled consumer code: {:#04X}", data);
                 }
             },
-            InternalMessage::AsciiKey(data) => {
-                println!("Unhandled ascii key: {:#04X}", data);
+            InternalMessage::AsciiKey(_data) => {
+                // Deliberately ignored
             }
             InternalMessage::KeyCode(data) => match data {
                 HID_KEY_ARROW_UP => {
