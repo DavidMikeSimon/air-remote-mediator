@@ -22,6 +22,7 @@ const HID_KEY_ARROW_UP: u8 = 0x52;
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum TvState {
     Unknown,
+    Starting(Instant),
     TvOff,
     TvOnDennis,
     TvOnOther,
@@ -49,7 +50,7 @@ enum InternalMessage {
 
 fn get_passthru_flag_command(state: &TvState) -> I2CCommand {
     return match *state {
-        TvState::TvOnDennis | TvState::Unknown => I2CCommand::PassthruEnable,
+        TvState::TvOnDennis | TvState::Unknown | TvState::Starting(_) => I2CCommand::PassthruEnable,
         TvState::TvOff | TvState::TvOnOther => I2CCommand::PassthruDisable,
     };
 }
@@ -125,13 +126,22 @@ async fn main() {
         match msg {
             InternalMessage::UpdateTvState(new_state) => {
                 if new_state != tv_state {
-                    tv_state = new_state;
-                    last_auto_sleep = Instant::now(); // Reset the auto sleep timer
-                    let _ = i2c_out_tx.try_send(get_passthru_flag_command(&tv_state));
-                    println!("TV State: {:?}", &tv_state);
+                    if let TvState::Starting(startup_time) = tv_state
+                        && new_state == TvState::TvOff
+                        && Instant::now() - startup_time < Duration::from_secs(10)
+                    {
+                        // Ignore TV still seeming to be off just after we sent
+                        // it a power on command, it takes a few seconds
+                        // sometimes
+                    } else {
+                        tv_state = new_state;
+                        last_auto_sleep = Instant::now(); // Reset the auto sleep timer
+                        let _ = i2c_out_tx.try_send(get_passthru_flag_command(&tv_state));
+                        println!("TV State: {:?}", &tv_state);
 
-                    if new_state == TvState::TvOnDennis {
-                        let _ = i2c_out_tx.try_send(I2CCommand::UsbWake);
+                        if new_state == TvState::TvOnDennis {
+                            let _ = i2c_out_tx.try_send(I2CCommand::UsbWake);
+                        }
                     }
                 }
             }
@@ -149,12 +159,13 @@ async fn main() {
                         let _ = i2c_out_tx.try_send(I2CCommand::UsbWake);
                         let _ = serial_out_tx.try_send(SerialCommand::PowerOn);
                         let _ = serial_out_tx.try_send(SerialCommand::SelectInput(1));
+                        tv_state = TvState::Starting(Instant::now());
                     }
                     TvState::TvOnDennis | TvState::TvOnOther => {
                         let _ = i2c_out_tx.try_send(I2CCommand::Sleep);
                         let _ = serial_out_tx.try_send(SerialCommand::PowerOff);
                     }
-                    TvState::Unknown => {}
+                    TvState::Unknown | TvState::Starting(_) => {}
                 }
             }
             InternalMessage::ConsumerCode(data) => match data {
