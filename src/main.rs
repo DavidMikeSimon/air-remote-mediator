@@ -137,6 +137,12 @@ async fn main() {
                         tv_state = new_state;
                         last_auto_sleep = Instant::now(); // Reset the auto sleep timer
                         let _ = i2c_out_tx.try_send(get_passthru_flag_command(&tv_state));
+                        let _ = mqtt_out_tx.try_send(MqttCommand::SetHyperHdr {
+                            state: matches!(
+                                tv_state,
+                                TvState::Starting(_) | TvState::TvOnDennis | TvState::TvOnOther
+                            ),
+                        });
                         println!("TV State: {:?}", &tv_state);
 
                         if new_state == TvState::TvOnDennis {
@@ -157,6 +163,7 @@ async fn main() {
                 match tv_state {
                     TvState::TvOff => {
                         let _ = i2c_out_tx.try_send(I2CCommand::UsbWake);
+                        let _ = mqtt_out_tx.try_send(MqttCommand::SetHyperHdr { state: true });
                         let _ = serial_out_tx.try_send(SerialCommand::PowerOn);
                         let _ = serial_out_tx.try_send(SerialCommand::SelectInput(1));
                         tv_state = TvState::Starting(Instant::now());

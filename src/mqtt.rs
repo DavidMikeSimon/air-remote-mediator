@@ -13,6 +13,7 @@ use crate::InternalMessage;
 
 const WAKE_TOPIC: &str = "air-remote/usb-power-on";
 const HOME_ASSISTANT_RUN_TOPIC: &str = "homeassistant_cmd/run";
+const HYPER_HDR_TOPIC: &str = "HyperHDR/JsonAPI";
 
 const HA_SCRIPT_NOTICE_DENNIS_USB_OFF: &str = "notice_dennis_usb_readiness_off";
 const HA_SCRIPT_NOTICE_DENNIS_USB_ON: &str = "notice_dennis_usb_readiness_on";
@@ -20,6 +21,7 @@ const HA_SCRIPT_NOTICE_DENNIS_USB_ON: &str = "notice_dennis_usb_readiness_on";
 #[derive(Clone, Debug)]
 pub(crate) enum MqttCommand {
     NoticeUsbChange { state: bool },
+    SetHyperHdr { state: bool },
 }
 
 pub(crate) async fn mqtt_thread(
@@ -87,7 +89,22 @@ async fn mqtt_loop(
                                 false => HA_SCRIPT_NOTICE_DENNIS_USB_OFF,
                             }
                         ).await.map_err(|err| err.to_string())?;
-                    }
+                    },
+                    Some(MqttCommand::SetHyperHdr { state }) => {
+                        mqtt_client.publish(
+                            HYPER_HDR_TOPIC,
+                            QoS::AtLeastOnce,
+                            true,
+                            json!({
+                                "command":"componentstate",
+                                "componentstate":
+                                {
+                                        "component":"ALL",
+                                        "state": state
+                                }
+                            }).to_string()
+                        ).await.map_err(|err| err.to_string())?;
+                    },
                 }
             },
         }
