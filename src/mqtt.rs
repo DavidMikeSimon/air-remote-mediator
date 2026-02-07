@@ -91,24 +91,32 @@ async fn mqtt_loop(
                         ).await.map_err(|err| err.to_string())?;
                     },
                     Some(MqttCommand::SetHyperHdr { state }) => {
-                        mqtt_client.publish(
-                            HYPER_HDR_TOPIC,
-                            QoS::AtLeastOnce,
-                            true,
-                            json!({
-                                "command":"componentstate",
-                                "componentstate":
-                                {
-                                        "component":"ALL",
-                                        "state": state
-                                }
-                            }).to_string()
-                        ).await.map_err(|err| err.to_string())?;
+                        set_hyper_hdr(&mqtt_client, state).await.map_err(|err| err.to_string())?;
                     },
                 }
             },
         }
     }
+}
+
+async fn set_hyper_hdr(client: &rumqttc::AsyncClient, state: bool) -> Result<(), ClientError> {
+    println!("Sending HyperHDR state {}", state);
+    client
+        .publish(
+            HYPER_HDR_TOPIC,
+            QoS::AtLeastOnce,
+            true,
+            json!({
+                "command":"componentstate",
+                "componentstate":
+                {
+                        "component":"ALL",
+                        "state": state
+                }
+            })
+            .to_string(),
+        )
+        .await
 }
 
 async fn send_ha_command(
