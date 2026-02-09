@@ -39,11 +39,14 @@ enum DennisState {
 enum InternalMessage {
     UpdateTvState(TvState),
     WakeDennis,
+    SleepDennis,
     AsciiKey(u8),
     ConsumerCode(u8),
     KeyCode(u8),
     OkButton,
     PowerButton,
+    PowerOn,
+    PowerOff,
     UsbReadinessStateChange(bool),
     InternalCheck,
 }
@@ -136,13 +139,14 @@ async fn main() {
                     } else {
                         tv_state = new_state;
                         last_auto_sleep = Instant::now(); // Reset the auto sleep timer
+                        let tv_is_on = matches!(
+                            tv_state,
+                            TvState::Starting(_) | TvState::TvOnDennis | TvState::TvOnOther
+                        );
                         let _ = i2c_out_tx.try_send(get_passthru_flag_command(&tv_state));
-                        let _ = mqtt_out_tx.try_send(MqttCommand::SetHyperHdr {
-                            state: matches!(
-                                tv_state,
-                                TvState::Starting(_) | TvState::TvOnDennis | TvState::TvOnOther
-                            ),
-                        });
+                        let _ = mqtt_out_tx.try_send(MqttCommand::SetHyperHdr { state: tv_is_on });
+                        let _ =
+                            mqtt_out_tx.try_send(MqttCommand::NoticeTvChange { state: tv_is_on });
                         println!("TV State: {:?}", &tv_state);
 
                         if new_state == TvState::TvOnDennis {
@@ -155,6 +159,9 @@ async fn main() {
                 last_auto_sleep = Instant::now(); // Reset the auto sleep timer
                 let _ = i2c_out_tx.try_send(I2CCommand::UsbWake);
             }
+            InternalMessage::SleepDennis => {
+                let _ = i2c_out_tx.try_send(I2CCommand::Sleep);
+            }
             InternalMessage::OkButton => {
                 let _ = serial_out_tx.try_send(SerialCommand::Ok);
             }
@@ -162,18 +169,26 @@ async fn main() {
                 last_auto_sleep = Instant::now(); // Reset the auto sleep timer
                 match tv_state {
                     TvState::TvOff => {
-                        let _ = i2c_out_tx.try_send(I2CCommand::UsbWake);
-                        let _ = mqtt_out_tx.try_send(MqttCommand::SetHyperHdr { state: true });
-                        let _ = serial_out_tx.try_send(SerialCommand::PowerOn);
-                        let _ = serial_out_tx.try_send(SerialCommand::SelectInput(1));
-                        tv_state = TvState::Starting(Instant::now());
+                        let _ = internal_message_tx.try_send(InternalMessage::PowerOn);
                     }
                     TvState::TvOnDennis | TvState::TvOnOther => {
-                        let _ = i2c_out_tx.try_send(I2CCommand::Sleep);
-                        let _ = serial_out_tx.try_send(SerialCommand::PowerOff);
+                        let _ = internal_message_tx.try_send(InternalMessage::PowerOff);
                     }
                     TvState::Unknown | TvState::Starting(_) => {}
                 }
+            }
+            InternalMessage::PowerOff => {
+                let _ = i2c_out_tx.try_send(I2CCommand::Sleep);
+                let _ = serial_out_tx.try_send(SerialCommand::PowerOff);
+                let _ = mqtt_out_tx.try_send(MqttCommand::NoticeTvChange { state: false });
+            }
+            InternalMessage::PowerOn => {
+                let _ = i2c_out_tx.try_send(I2CCommand::UsbWake);
+                let _ = mqtt_out_tx.try_send(MqttCommand::SetHyperHdr { state: true });
+                let _ = serial_out_tx.try_send(SerialCommand::PowerOn);
+                let _ = mqtt_out_tx.try_send(MqttCommand::NoticeTvChange { state: true });
+                let _ = serial_out_tx.try_send(SerialCommand::SelectInput(1));
+                tv_state = TvState::Starting(Instant::now());
             }
             InternalMessage::ConsumerCode(data) => match data {
                 CONSUMER_CODE_VOLUME_DOWN => {
