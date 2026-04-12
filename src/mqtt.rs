@@ -18,12 +18,17 @@ const HA_DISCOVERY_TOPIC: &str = "homeassistant/device/air-remote-living-room/co
 const HA_DEVICE_TOPIC_BASE: &str = "air-remote-living-room";
 const DENNIS_STATE_TOPIC: &str = formatcp!("{HA_DEVICE_TOPIC_BASE}/dennis/state");
 const DENNIS_COMMAND_TOPIC: &str = formatcp!("{HA_DEVICE_TOPIC_BASE}/dennis/command");
+const DENNIS_AUTO_SLEEP_STATE_TOPIC: &str =
+    formatcp!("{HA_DEVICE_TOPIC_BASE}/dennis_auto_sleep_off/state");
+const DENNIS_AUTO_SLEEP_COMMAND_TOPIC: &str =
+    formatcp!("{HA_DEVICE_TOPIC_BASE}/dennis_auto_sleep_off/command");
 const TV_STATE_TOPIC: &str = formatcp!("{HA_DEVICE_TOPIC_BASE}/tv/state");
 const TV_COMMAND_TOPIC: &str = formatcp!("{HA_DEVICE_TOPIC_BASE}/tv/command");
 
 #[derive(Clone, Debug)]
 pub(crate) enum MqttCommand {
     NoticeUsbChange { state: bool },
+    NoticeAutoSleepChange { state: bool },
     NoticeTvChange { state: bool },
     SetHyperHdr { state: bool },
 }
@@ -75,6 +80,19 @@ async fn mqtt_loop(
                                 other => println!("ERR: Unknown message {:?} on Dennis command topic", other)
                             }
                         }
+                        DENNIS_AUTO_SLEEP_COMMAND_TOPIC => {
+                            match str::from_utf8(&message.payload).expect("Parse Dennis command message") {
+                                "ON" => internal_message_tx
+                                    .send(InternalMessage::SetDennisAutoSleepMode(true))
+                                    .await
+                                    .expect("Send wake Dennis message"),
+                                "OFF" => internal_message_tx
+                                    .send(InternalMessage::SetDennisAutoSleepMode(false))
+                                    .await
+                                    .expect("Send sleep Dennis message"),
+                                other => println!("ERR: Unknown message {:?} on Dennis command topic", other)
+                            }
+                        }
                         TV_COMMAND_TOPIC => {
                             match str::from_utf8(&message.payload).expect("Parse TV command message") {
                                 "ON" => internal_message_tx
@@ -100,6 +118,10 @@ async fn mqtt_loop(
                             .await
                             .expect("Subscribe to dennis command topic");
                         mqtt_client
+                            .subscribe(DENNIS_AUTO_SLEEP_COMMAND_TOPIC, QoS::AtLeastOnce)
+                            .await
+                            .expect("Subscribe to dennis auto-sleep command topic");
+                        mqtt_client
                             .subscribe(TV_COMMAND_TOPIC, QoS::AtLeastOnce)
                             .await
                             .expect("Subscribe to tv command topic");
@@ -113,6 +135,9 @@ async fn mqtt_loop(
                     None => return Ok(()),
                     Some(MqttCommand::NoticeUsbChange { state }) => {
                         set_binary_state(&mqtt_client, DENNIS_STATE_TOPIC, state).await.map_err(|err| err.to_string())?;
+                    },
+                    Some(MqttCommand::NoticeAutoSleepChange { state }) => {
+                        set_binary_state(&mqtt_client, DENNIS_AUTO_SLEEP_STATE_TOPIC, state).await.map_err(|err| err.to_string())?;
                     },
                     Some(MqttCommand::NoticeTvChange { state }) => {
                         set_binary_state(&mqtt_client, TV_STATE_TOPIC, state).await.map_err(|err| err.to_string())?;
@@ -189,6 +214,15 @@ async fn send_discovery_payload(client: &rumqttc::AsyncClient) -> Result<(), Cli
                         "payload_on": "ON",
                         "state_topic": DENNIS_STATE_TOPIC,
                         "command_topic": DENNIS_COMMAND_TOPIC,
+                    },
+                    "dennis-auto": {
+                        "name": "Air Remote Living Room Dennis Auto Sleep",
+                        "platform": "switch",
+                        "unique_id": "dennis-auto",
+                        "payload_off": "OFF",
+                        "payload_on": "ON",
+                        "state_topic": DENNIS_AUTO_SLEEP_STATE_TOPIC,
+                        "command_topic": DENNIS_AUTO_SLEEP_COMMAND_TOPIC,
                     },
                     "tv": {
                         "name": "Air Remote Living Room TV",

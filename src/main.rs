@@ -2,6 +2,7 @@ mod i2c;
 mod mqtt;
 mod serial;
 
+use std::process;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
@@ -40,6 +41,7 @@ enum InternalMessage {
     UpdateTvState(TvState),
     WakeDennis,
     SleepDennis,
+    SetDennisAutoSleepMode(bool),
     AsciiKey(u8),
     ConsumerCode(u8),
     KeyCode(u8),
@@ -94,31 +96,35 @@ async fn main() {
 
     let mut tv_state = TvState::Unknown;
     let mut dennis_state = DennisState::Unknown;
+    let mut dennis_auto_sleep_state = true;
     let mut last_auto_sleep = Instant::now();
 
     let _ = i2c_out_tx.try_send(get_passthru_flag_command(&tv_state));
+    let _ = mqtt_out_tx.try_send(MqttCommand::NoticeAutoSleepChange {
+        state: dennis_auto_sleep_state,
+    });
 
     while let Some(msg) = internal_message_rx.recv().await {
         if i2c_thread_handle.is_finished() {
             eprintln!("Error: I2C task died");
-            // FIXME: Returning from main doesn't actually exit the program!
-            return;
+            process::exit(1);
         }
         if mqtt_thread_handle.is_finished() {
             eprintln!("Error: MQTT thread died");
-            return;
+            process::exit(1);
         }
         if serial_thread_handle.is_finished() {
             eprintln!("Error: Serial thread died");
-            return;
+            process::exit(1);
         }
         if internal_thread_handle.is_finished() {
             eprintln!("Error: Internal check thread died");
-            return;
+            process::exit(1);
         }
 
         if (tv_state == TvState::TvOff || tv_state == TvState::TvOnOther)
             && dennis_state == DennisState::On
+            && dennis_auto_sleep_state
             && Instant::now() - last_auto_sleep > Duration::from_secs(10)
         {
             println!("Dennis was left on, sending sleep command");
@@ -161,6 +167,10 @@ async fn main() {
             }
             InternalMessage::SleepDennis => {
                 let _ = i2c_out_tx.try_send(I2CCommand::Sleep);
+            }
+            InternalMessage::SetDennisAutoSleepMode(state) => {
+                dennis_auto_sleep_state = state;
+                let _ = mqtt_out_tx.try_send(MqttCommand::NoticeAutoSleepChange { state });
             }
             InternalMessage::OkButton => {
                 let _ = serial_out_tx.try_send(SerialCommand::Ok);
@@ -246,6 +256,6 @@ async fn main() {
         }
     }
 
-    // FIXME: Returning from main doesn't actually exit the program!
     eprintln!("Error: Internal message queue returned None");
+    process::exit(1);
 }
