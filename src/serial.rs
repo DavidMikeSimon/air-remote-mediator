@@ -5,6 +5,38 @@ use std::io::{Error, ErrorKind};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum EnergySavingMode {
+    Off,
+    Minimum,
+    Medium,
+    Maximum,
+    Auto,
+}
+
+impl EnergySavingMode {
+    fn from_u8(n: u8) -> Self {
+        match n {
+            0 => EnergySavingMode::Off,
+            1 => EnergySavingMode::Minimum,
+            2 => EnergySavingMode::Medium,
+            3 => EnergySavingMode::Maximum,
+            4 => EnergySavingMode::Auto,
+            _ => panic!("Invalid energy saving mode value {}", n),
+        }
+    }
+
+    fn to_u8(&self) -> u8 {
+        match self {
+            EnergySavingMode::Off => 0,
+            EnergySavingMode::Minimum => 1,
+            EnergySavingMode::Medium => 2,
+            EnergySavingMode::Maximum => 3,
+            EnergySavingMode::Auto => 4,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum SerialCommand {
     VolumeUp,
@@ -20,6 +52,7 @@ pub(crate) enum SerialCommand {
     Back,
     Settings,
     Input,
+    SetEnergySavingMode(EnergySavingMode),
 }
 
 pub(crate) fn blocking_serial_thread(
@@ -84,12 +117,30 @@ fn serial_loop(
                 SerialCommand::Back => send_key_code(&mut *port, KEY_CODE_BACK)?,
                 SerialCommand::Settings => send_key_code(&mut *port, KEY_CODE_SETTINGS)?,
                 SerialCommand::Input => send_key_code(&mut *port, KEY_CODE_INPUT)?,
+                SerialCommand::SetEnergySavingMode(energy_saving_mode) => {
+                    set_energy_saving_mode(&mut *port, energy_saving_mode)?
+                }
             }
             std::thread::sleep(Duration::from_millis(10));
         }
 
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+fn set_energy_saving_mode(
+    port: &mut dyn serialport::SerialPort,
+    energy_saving_mode: EnergySavingMode,
+) -> Result<(), std::io::Error> {
+    let current_mode = EnergySavingMode::from_u8(query(port, COMMAND_ENERGY_SAVING_MODE)?);
+    if current_mode != energy_saving_mode {
+        println!(
+            "Serial: Set energy saving mode to {:?}",
+            &energy_saving_mode
+        );
+        run_command(port, COMMAND_ENERGY_SAVING_MODE, energy_saving_mode.to_u8())?;
+    }
+    Ok(())
 }
 
 const KEY_CODE_VOLUME_UP: u8 = 0x02;
@@ -106,6 +157,7 @@ const KEY_CODE_BACK: u8 = 0x28;
 const COMMAND_POWER: &str = "ka";
 const COMMAND_INPUT: &str = "xb";
 const COMMAND_KEY_CODE: &str = "mc";
+const COMMAND_ENERGY_SAVING_MODE: &str = "jq";
 
 const QUERY: u8 = 0xff;
 

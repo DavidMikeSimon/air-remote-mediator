@@ -10,10 +10,11 @@ use serde_json::json;
 use tokio::select;
 use tokio::sync::mpsc;
 
-use crate::InternalMessage;
+use crate::{InternalMessage, SunState};
 
 const HYPER_HDR_TOPIC: &str = "HyperHDR/JsonAPI";
 const HA_DISCOVERY_TOPIC: &str = "homeassistant/device/air-remote-living-room/config";
+const HA_SUN_STATESTREAM_TOPIC: &str = "homeassistant_statestream/sun/sun/state";
 
 const HA_DEVICE_TOPIC_BASE: &str = "air-remote-living-room";
 const DENNIS_STATE_TOPIC: &str = formatcp!("{HA_DEVICE_TOPIC_BASE}/dennis/state");
@@ -85,11 +86,11 @@ async fn mqtt_loop(
                                 "ON" => internal_message_tx
                                     .send(InternalMessage::SetDennisAutoSleepMode(true))
                                     .await
-                                    .expect("Send wake Dennis message"),
+                                    .expect("Send dennis auto sleep on message"),
                                 "OFF" => internal_message_tx
                                     .send(InternalMessage::SetDennisAutoSleepMode(false))
                                     .await
-                                    .expect("Send sleep Dennis message"),
+                                    .expect("Send dennis auto sleep off message"),
                                 other => println!("ERR: Unknown message {:?} on Dennis command topic", other)
                             }
                         }
@@ -98,11 +99,24 @@ async fn mqtt_loop(
                                 "ON" => internal_message_tx
                                     .send(InternalMessage::PowerOn)
                                     .await
-                                    .expect("Send wake Dennis message"),
+                                    .expect("Send power on message"),
                                 "OFF" => internal_message_tx
                                     .send(InternalMessage::PowerOff)
                                     .await
-                                    .expect("Send sleep Dennis message"),
+                                    .expect("Send power off message"),
+                                other => println!("ERR: Unknown message {:?} on TV command topic", other)
+                            }
+                        }
+                        HA_SUN_STATESTREAM_TOPIC => {
+                            match str::from_utf8(&message.payload).expect("Parse TV command message") {
+                                "above_horizon" => internal_message_tx
+                                    .send(InternalMessage::UpdateSunState(SunState::AboveHorizon))
+                                    .await
+                                    .expect("Send sun-above-horizon message"),
+                                "OFF" => internal_message_tx
+                                    .send(InternalMessage::PowerOff)
+                                    .await
+                                    .expect("Send sun-below-horizon message"),
                                 other => println!("ERR: Unknown message {:?} on TV command topic", other)
                             }
                         }
@@ -125,6 +139,10 @@ async fn mqtt_loop(
                             .subscribe(TV_COMMAND_TOPIC, QoS::AtLeastOnce)
                             .await
                             .expect("Subscribe to tv command topic");
+                        mqtt_client
+                            .subscribe(HA_SUN_STATESTREAM_TOPIC, QoS::AtLeastOnce)
+                            .await
+                            .expect("Subscribe to sun state topic");
                     }
                     Incoming(_) => {}
                     Outgoing(_) => {}
