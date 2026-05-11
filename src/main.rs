@@ -69,11 +69,11 @@ fn get_passthru_flag_command(state: &TvState) -> I2CCommand {
     }
 }
 
-fn get_energy_saving_mode(sun_state: &SunState) -> EnergySavingMode {
+fn get_energy_saving_mode(sun_state: &SunState) -> Option<EnergySavingMode> {
     match *sun_state {
-        SunState::Unknown => EnergySavingMode::Minimum,
-        SunState::AboveHorizon => EnergySavingMode::Minimum,
-        SunState::BelowHorizon => EnergySavingMode::Maximum,
+        SunState::Unknown => None,
+        SunState::AboveHorizon => Some(EnergySavingMode::Minimum),
+        SunState::BelowHorizon => Some(EnergySavingMode::Maximum),
     }
 }
 
@@ -171,9 +171,13 @@ async fn main() {
                         let _ = mqtt_out_tx.try_send(MqttCommand::SetHyperHdr { state: tv_is_on });
                         let _ =
                             mqtt_out_tx.try_send(MqttCommand::NoticeTvChange { state: tv_is_on });
-                        let _ = serial_out_tx.try_send(SerialCommand::SetEnergySavingMode(
-                            get_energy_saving_mode(&sun_state),
-                        ));
+                        if new_state != TvState::TvOff
+                            && let Some(new_energy_saving_mode) = get_energy_saving_mode(&sun_state)
+                        {
+                            let _ = serial_out_tx.try_send(SerialCommand::SetEnergySavingMode(
+                                new_energy_saving_mode,
+                            ));
+                        }
                         println!("TV State: {:?}", &tv_state);
 
                         if new_state == TvState::TvOnDennis {
@@ -183,11 +187,14 @@ async fn main() {
                 }
             }
             InternalMessage::UpdateSunState(new_state) => {
-                sun_state = new_state;
-                println!("Sun State: {:?}", &sun_state);
-                let _ = serial_out_tx.try_send(SerialCommand::SetEnergySavingMode(
-                    get_energy_saving_mode(&new_state),
-                ));
+                if new_state != sun_state {
+                    sun_state = new_state;
+                    println!("Sun State: {:?}", &sun_state);
+                    if let Some(new_energy_saving_mode) = get_energy_saving_mode(&sun_state) {
+                        let _ = serial_out_tx
+                            .try_send(SerialCommand::SetEnergySavingMode(new_energy_saving_mode));
+                    }
+                }
             }
             InternalMessage::WakeDennis => {
                 last_auto_sleep = Instant::now(); // Reset the auto sleep timer

@@ -124,7 +124,7 @@ fn serial_loop(
             std::thread::sleep(Duration::from_millis(10));
         }
 
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(Duration::from_millis(100));
     }
 }
 

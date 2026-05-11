@@ -113,8 +113,8 @@ async fn mqtt_loop(
                                     .send(InternalMessage::UpdateSunState(SunState::AboveHorizon))
                                     .await
                                     .expect("Send sun-above-horizon message"),
-                                "OFF" => internal_message_tx
-                                    .send(InternalMessage::PowerOff)
+                                "below_horizon" => internal_message_tx
+                                    .send(InternalMessage::UpdateSunState(SunState::BelowHorizon))
                                     .await
                                     .expect("Send sun-below-horizon message"),
                                 other => println!("ERR: Unknown message {:?} on TV command topic", other)
