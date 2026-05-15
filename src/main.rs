@@ -167,6 +167,7 @@ async fn main() {
                             tv_state,
                             TvState::Starting(_) | TvState::TvOnDennis | TvState::TvOnOther
                         );
+                        let _ = serial_out_tx.try_send(SerialCommand::Reset);
                         let _ = i2c_out_tx.try_send(get_passthru_flag_command(&tv_state));
                         let _ = mqtt_out_tx.try_send(MqttCommand::SetHyperHdr { state: tv_is_on });
                         let _ =
@@ -190,7 +191,13 @@ async fn main() {
                 if new_state != sun_state {
                     sun_state = new_state;
                     println!("Sun State: {:?}", &sun_state);
-                    if let Some(new_energy_saving_mode) = get_energy_saving_mode(&sun_state) {
+                    let tv_is_on = matches!(
+                        tv_state,
+                        TvState::Starting(_) | TvState::TvOnDennis | TvState::TvOnOther
+                    );
+                    if tv_is_on
+                        && let Some(new_energy_saving_mode) = get_energy_saving_mode(&sun_state)
+                    {
                         let _ = serial_out_tx
                             .try_send(SerialCommand::SetEnergySavingMode(new_energy_saving_mode));
                     }

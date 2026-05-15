@@ -53,6 +53,7 @@ pub(crate) enum SerialCommand {
     Settings,
     Input,
     SetEnergySavingMode(EnergySavingMode),
+    Reset,
 }
 
 pub(crate) fn blocking_serial_thread(
@@ -65,7 +66,7 @@ pub(crate) fn blocking_serial_thread(
             println!("Serial: Connection lost: {}", error);
         }
 
-        std::thread::sleep(Duration::from_secs(1));
+        std::thread::sleep(Duration::from_millis(500));
     }
 }
 
@@ -86,7 +87,7 @@ fn serial_loop(
     }
 
     // Get an initial state reading to confirm we're connected.
-    for _ in 1..100 {
+    for _ in 1..500 {
         if let Ok(_) = get_state(&mut *port) {
             break;
         }
@@ -119,6 +120,9 @@ fn serial_loop(
                 SerialCommand::Input => send_key_code(&mut *port, KEY_CODE_INPUT)?,
                 SerialCommand::SetEnergySavingMode(energy_saving_mode) => {
                     set_energy_saving_mode(&mut *port, energy_saving_mode)?
+                }
+                SerialCommand::Reset => {
+                    return Ok(());
                 }
             }
             std::thread::sleep(Duration::from_millis(10));
