@@ -53,7 +53,6 @@ pub(crate) enum SerialCommand {
     Settings,
     Input,
     SetEnergySavingMode(EnergySavingMode),
-    Reset,
 }
 
 pub(crate) fn blocking_serial_thread(
@@ -120,9 +119,6 @@ fn serial_loop(
                 SerialCommand::Input => send_key_code(&mut *port, KEY_CODE_INPUT)?,
                 SerialCommand::SetEnergySavingMode(energy_saving_mode) => {
                     set_energy_saving_mode(&mut *port, energy_saving_mode)?
-                }
-                SerialCommand::Reset => {
-                    return Ok(());
                 }
             }
             std::thread::sleep(Duration::from_millis(10));

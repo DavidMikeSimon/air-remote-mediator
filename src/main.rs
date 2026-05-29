@@ -1,6 +1,7 @@
 mod i2c;
 mod mqtt;
 mod serial;
+mod transactional_receiver;
 
 use std::process;
 use std::time::{Duration, Instant};
@@ -167,7 +168,6 @@ async fn main() {
                             tv_state,
                             TvState::Starting(_) | TvState::TvOnDennis | TvState::TvOnOther
                         );
-                        let _ = serial_out_tx.try_send(SerialCommand::Reset);
                         let _ = i2c_out_tx.try_send(get_passthru_flag_command(&tv_state));
                         let _ = mqtt_out_tx.try_send(MqttCommand::SetHyperHdr { state: tv_is_on });
                         let _ =
