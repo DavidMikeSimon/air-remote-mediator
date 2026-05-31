@@ -1,11 +1,11 @@
 // Based on https://github.com/andrewrabert/sony-bravia-cli
 
-use crate::{InternalMessage, TvState};
+use crate::{InternalMessage, TvState, transactional_receiver::TransactionalReceiver};
 use std::io::{Error, ErrorKind};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub(crate) enum EnergySavingMode {
     Off,
     Minimum,
@@ -57,10 +57,13 @@ pub(crate) enum SerialCommand {
 
 pub(crate) fn blocking_serial_thread(
     internal_message_tx: mpsc::Sender<InternalMessage>,
-    mut serial_out_rx: mpsc::Receiver<SerialCommand>,
+    serial_out_rx: mpsc::Receiver<SerialCommand>,
 ) {
+    let mut serial_transactional_rx =
+        TransactionalReceiver::new(serial_out_rx, Duration::from_secs(15));
+
     loop {
-        let exit = serial_loop(&internal_message_tx, &mut serial_out_rx);
+        let exit = serial_loop(&internal_message_tx, &mut serial_transactional_rx);
         if let Err(error) = exit {
             println!("Serial: Connection lost: {}", error);
         }
@@ -71,7 +74,7 @@ pub(crate) fn blocking_serial_thread(
 
 fn serial_loop(
     internal_message_tx: &mpsc::Sender<InternalMessage>,
-    serial_out_rx: &mut mpsc::Receiver<SerialCommand>,
+    serial_transactional_rx: &mut TransactionalReceiver<SerialCommand>,
 ) -> Result<(), std::io::Error> {
     println!("Serial: Connecting");
 
@@ -101,14 +104,14 @@ fn serial_loop(
             .blocking_send(InternalMessage::UpdateTvState(state))
             .expect("Serial TV state send");
 
-        while let Ok(cmd) = serial_out_rx.try_recv() {
+        while let Ok(cmd) = serial_transactional_rx.try_recv() {
             println!("Serial: Command {:?}", cmd);
             match cmd {
                 SerialCommand::VolumeUp => send_key_code(&mut *port, KEY_CODE_VOLUME_UP)?,
                 SerialCommand::VolumeDown => send_key_code(&mut *port, KEY_CODE_VOLUME_DOWN)?,
                 SerialCommand::PowerOn => power_on(&mut *port)?,
                 SerialCommand::PowerOff => power_off(&mut *port)?,
-                SerialCommand::SelectInput(input) => select_hdmi_input(&mut *port, input)?,
+                SerialCommand::SelectInput(input) => select_hdmi_input(&mut *port, *input)?,
                 SerialCommand::CursorUp => send_key_code(&mut *port, KEY_CODE_CURSOR_UP)?,
                 SerialCommand::CursorDown => send_key_code(&mut *port, KEY_CODE_CURSOR_DOWN)?,
                 SerialCommand::CursorLeft => send_key_code(&mut *port, KEY_CODE_CURSOR_LEFT)?,
@@ -118,9 +121,10 @@ fn serial_loop(
                 SerialCommand::Settings => send_key_code(&mut *port, KEY_CODE_SETTINGS)?,
                 SerialCommand::Input => send_key_code(&mut *port, KEY_CODE_INPUT)?,
                 SerialCommand::SetEnergySavingMode(energy_saving_mode) => {
-                    set_energy_saving_mode(&mut *port, energy_saving_mode)?
+                    set_energy_saving_mode(&mut *port, *energy_saving_mode)?
                 }
             }
+            serial_transactional_rx.commit();
             std::thread::sleep(Duration::from_millis(10));
         }
 

@@ -7,14 +7,17 @@ struct MessageWithTimestamp<T> {
     timestamp: Instant,
 }
 
-struct TransactionalReceiver<T> {
+pub struct TransactionalReceiver<T> {
     receiver: mpsc::Receiver<T>,
     current_message: Option<MessageWithTimestamp<T>>,
     maximum_duration: Duration,
 }
 
 impl<T> TransactionalReceiver<T> {
-    fn new(receiver: mpsc::Receiver<T>, maximum_duration: Duration) -> TransactionalReceiver<T> {
+    pub fn new(
+        receiver: mpsc::Receiver<T>,
+        maximum_duration: Duration,
+    ) -> TransactionalReceiver<T> {
         return TransactionalReceiver {
             receiver,
             current_message: None,
@@ -22,7 +25,7 @@ impl<T> TransactionalReceiver<T> {
         };
     }
 
-    fn try_recv_vs_timestamp(&mut self, now: &Instant) -> Result<&T, TryRecvError> {
+    pub fn try_recv_vs_timestamp(&mut self, now: &Instant) -> Result<&T, TryRecvError> {
         if let Some(MessageWithTimestamp { timestamp, .. }) = self.current_message
             && *now - timestamp > self.maximum_duration
         {
@@ -48,11 +51,11 @@ impl<T> TransactionalReceiver<T> {
         }
     }
 
-    fn try_recv(&mut self) -> Result<&T, TryRecvError> {
+    pub fn try_recv(&mut self) -> Result<&T, TryRecvError> {
         self.try_recv_vs_timestamp(&Instant::now())
     }
 
-    fn commit(&mut self) {
+    pub fn commit(&mut self) {
         match self.current_message {
             Some(_) => {
                 self.current_message = None;
