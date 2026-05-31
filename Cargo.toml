@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 const_format = "0.2.35"
+jiff = "0.2.28"
 rppal = "0.22.1"
 rumqttc = "0.25.0"
 serde = { version = "1.0.193", features = ['derive'] }

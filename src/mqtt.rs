@@ -10,11 +10,11 @@ use serde_json::json;
 use tokio::select;
 use tokio::sync::mpsc;
 
-use crate::{InternalMessage, SunState};
+use crate::InternalMessage;
 
 const HYPER_HDR_TOPIC: &str = "HyperHDR/JsonAPI";
 const HA_DISCOVERY_TOPIC: &str = "homeassistant/device/air-remote-living-room/config";
-const HA_SUN_STATESTREAM_TOPIC: &str = "homeassistant_statestream/sun/sun/state";
+const HA_SUN_ELEVATION_STATESTREAM_TOPIC: &str = "homeassistant_statestream/sun/sun/elevation";
 
 const HA_DEVICE_TOPIC_BASE: &str = "air-remote-living-room";
 const DENNIS_STATE_TOPIC: &str = formatcp!("{HA_DEVICE_TOPIC_BASE}/dennis/state");
@@ -107,18 +107,15 @@ async fn mqtt_loop(
                                 other => println!("ERR: Unknown message {:?} on TV command topic", other)
                             }
                         }
-                        HA_SUN_STATESTREAM_TOPIC => {
-                            match str::from_utf8(&message.payload).expect("Parse TV command message") {
-                                "above_horizon" => internal_message_tx
-                                    .send(InternalMessage::UpdateSunState(SunState::AboveHorizon))
-                                    .await
-                                    .expect("Send sun-above-horizon message"),
-                                "below_horizon" => internal_message_tx
-                                    .send(InternalMessage::UpdateSunState(SunState::BelowHorizon))
-                                    .await
-                                    .expect("Send sun-below-horizon message"),
-                                other => println!("ERR: Unknown message {:?} on TV command topic", other)
-                            }
+                        HA_SUN_ELEVATION_STATESTREAM_TOPIC => {
+                            let elevation: f32 = str::from_utf8(&message.payload)
+                                .expect("Sun elevation UTF-8 parse")
+                                .parse()
+                                .expect("Sun elevation numeric parse");
+                            internal_message_tx
+                                .send(InternalMessage::UpdateSunElevation(elevation))
+                                .await
+                                .expect("Send sun elevation message");
                         }
                         _ => {
                             println!("ERR: Message from unknown topic {:?}", message.topic);
@@ -140,9 +137,9 @@ async fn mqtt_loop(
                             .await
                             .expect("Subscribe to tv command topic");
                         mqtt_client
-                            .subscribe(HA_SUN_STATESTREAM_TOPIC, QoS::AtLeastOnce)
+                            .subscribe(HA_SUN_ELEVATION_STATESTREAM_TOPIC, QoS::AtLeastOnce)
                             .await
-                            .expect("Subscribe to sun state topic");
+                            .expect("Subscribe to sun elevation topic");
                     }
                     Incoming(_) => {}
                     Outgoing(_) => {}

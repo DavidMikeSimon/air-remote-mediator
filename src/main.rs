@@ -3,6 +3,7 @@ mod mqtt;
 mod serial;
 mod transactional_receiver;
 
+use jiff::Zoned;
 use std::process;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -23,19 +24,21 @@ const HID_KEY_ARROW_DOWN: u8 = 0x51;
 const HID_KEY_ARROW_UP: u8 = 0x52;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-enum SunState {
-    Unknown,
-    AboveHorizon,
-    BelowHorizon,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum TvState {
     Unknown,
     Starting(Instant),
     TvOff,
     TvOnDennis,
     TvOnOther,
+}
+
+impl TvState {
+    fn tv_is_on(&self) -> bool {
+        matches!(
+            self,
+            TvState::Starting(_) | TvState::TvOnDennis | TvState::TvOnOther
+        )
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -47,7 +50,7 @@ enum DennisState {
 
 #[derive(Debug)]
 enum InternalMessage {
-    UpdateSunState(SunState),
+    UpdateSunElevation(f32),
     UpdateTvState(TvState),
     WakeDennis,
     SleepDennis,
@@ -70,11 +73,16 @@ fn get_passthru_flag_command(state: &TvState) -> I2CCommand {
     }
 }
 
-fn get_energy_saving_mode(sun_state: &SunState) -> Option<EnergySavingMode> {
-    match *sun_state {
-        SunState::Unknown => None,
-        SunState::AboveHorizon => Some(EnergySavingMode::Minimum),
-        SunState::BelowHorizon => Some(EnergySavingMode::Maximum),
+fn get_energy_saving_mode(sun_elevation: f32) -> EnergySavingMode {
+    match (sun_elevation, Zoned::now().hour()) {
+        // Night, sun is well below horizon
+        (..-6.0, _) => EnergySavingMode::Maximum,
+        // Early morning or late evening
+        (-6.0..6.0, _) => EnergySavingMode::Medium,
+        // Mid-morning tends to be extra bright in the living room
+        (6.0..55.0, ..12) => EnergySavingMode::Off,
+        // Daytime
+        _ => EnergySavingMode::Minimum,
     }
 }
 
@@ -112,7 +120,8 @@ async fn main() {
     let internal_check_sender = internal_message_tx.clone();
     let internal_thread_handle = tokio::task::spawn(internal_check_thread(internal_check_sender));
 
-    let mut sun_state = SunState::Unknown;
+    let mut current_sun_elevation: Option<f32> = None;
+    let mut current_energy_saving_mode: Option<EnergySavingMode> = None;
     let mut tv_state = TvState::Unknown;
     let mut dennis_state = DennisState::Unknown;
     let mut dennis_auto_sleep_state = true;
@@ -163,44 +172,39 @@ async fn main() {
                         // sometimes
                     } else {
                         tv_state = new_state;
+                        println!("TV State: {:?}", &tv_state);
                         last_auto_sleep = Instant::now(); // Reset the auto sleep timer
-                        let tv_is_on = matches!(
-                            tv_state,
-                            TvState::Starting(_) | TvState::TvOnDennis | TvState::TvOnOther
-                        );
+                        let tv_is_on = tv_state.tv_is_on();
                         let _ = i2c_out_tx.try_send(get_passthru_flag_command(&tv_state));
                         let _ = mqtt_out_tx.try_send(MqttCommand::SetHyperHdr { state: tv_is_on });
                         let _ =
                             mqtt_out_tx.try_send(MqttCommand::NoticeTvChange { state: tv_is_on });
-                        if new_state != TvState::TvOff
-                            && let Some(new_energy_saving_mode) = get_energy_saving_mode(&sun_state)
+                        if new_state == TvState::TvOnDennis {
+                            let _ = i2c_out_tx.try_send(I2CCommand::UsbWake);
+                        }
+
+                        if let Some(sun_elevation) = current_sun_elevation
+                            && tv_is_on
                         {
+                            let new_energy_saving_mode = get_energy_saving_mode(sun_elevation);
+                            current_energy_saving_mode = Some(new_energy_saving_mode);
                             let _ = serial_out_tx.try_send(SerialCommand::SetEnergySavingMode(
                                 new_energy_saving_mode,
                             ));
                         }
-                        println!("TV State: {:?}", &tv_state);
-
-                        if new_state == TvState::TvOnDennis {
-                            let _ = i2c_out_tx.try_send(I2CCommand::UsbWake);
-                        }
                     }
                 }
             }
-            InternalMessage::UpdateSunState(new_state) => {
-                if new_state != sun_state {
-                    sun_state = new_state;
-                    println!("Sun State: {:?}", &sun_state);
-                    let tv_is_on = matches!(
-                        tv_state,
-                        TvState::Starting(_) | TvState::TvOnDennis | TvState::TvOnOther
-                    );
-                    if tv_is_on
-                        && let Some(new_energy_saving_mode) = get_energy_saving_mode(&sun_state)
-                    {
+            InternalMessage::UpdateSunElevation(new_elevation) => {
+                current_sun_elevation = Some(new_elevation);
+
+                let new_energy_saving_mode = get_energy_saving_mode(new_elevation);
+                if current_energy_saving_mode.is_none_or(|mode| mode != new_energy_saving_mode) {
+                    if tv_state.tv_is_on() {
                         let _ = serial_out_tx
                             .try_send(SerialCommand::SetEnergySavingMode(new_energy_saving_mode));
                     }
+                    current_energy_saving_mode = Some(new_energy_saving_mode);
                 }
             }
             InternalMessage::WakeDennis => {
