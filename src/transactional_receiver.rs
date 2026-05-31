@@ -23,39 +23,29 @@ impl<T> TransactionalReceiver<T> {
     }
 
     fn try_recv_vs_timestamp(&mut self, now: &Instant) -> Result<&T, TryRecvError> {
-        let mut timed_out = false;
-        if let Some(MessageWithTimestamp { timestamp, .. }) = self.current_message {
-            if *now - timestamp > self.maximum_duration {
-                timed_out = true;
-            }
-        }
-
-        if timed_out {
-            self.current_message = None;
+        if let Some(MessageWithTimestamp { timestamp, .. }) = self.current_message
+            && *now - timestamp > self.maximum_duration
+        {
+            self.current_message = None
         }
 
         if self.current_message.is_none() {
             let next_message_maybe = self.receiver.try_recv();
-            return match next_message_maybe {
+            match next_message_maybe {
                 Ok(next_message) => {
                     self.current_message = Some(MessageWithTimestamp {
                         message: next_message,
-                        timestamp: Instant::now(),
+                        timestamp: *now,
                     });
-                    match &self.current_message {
-                        Some(MessageWithTimestamp { message, .. }) => Ok(&message),
-                        None => unreachable!(),
-                    }
                 }
-                Err(error) => Err(error),
+                Err(error) => return Err(error),
             };
         }
 
-        if let Some(MessageWithTimestamp { message, .. }) = &self.current_message {
-            return Ok(&message);
+        match &self.current_message {
+            Some(MessageWithTimestamp { message, .. }) => Ok(&message),
+            None => unreachable!(), // Message should always have been set above
         }
-
-        unreachable!();
     }
 
     fn try_recv(&mut self) -> Result<&T, TryRecvError> {
