@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
 
-use tokio::sync::mpsc::{self, error::TryRecvError};
+use hotpath::wrap::tokio::sync::mpsc;
+use tokio::sync::mpsc::error::TryRecvError;
 
 struct MessageWithTimestamp<T> {
     message: T,

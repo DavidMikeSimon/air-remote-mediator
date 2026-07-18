@@ -1,9 +1,9 @@
 // Based on https://github.com/andrewrabert/sony-bravia-cli
 
 use crate::{InternalMessage, TvState, transactional_receiver::TransactionalReceiver};
+use hotpath::wrap::tokio::sync::mpsc;
 use std::io::{Error, ErrorKind};
 use std::time::Duration;
-use tokio::sync::mpsc;
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub(crate) enum EnergySavingMode {
@@ -98,11 +98,16 @@ fn serial_loop(
 
     println!("Serial: Ready");
 
+    let mut last_sent_state: Option<TvState> = None;
+
     loop {
         let state = get_state(&mut *port)?;
-        internal_message_tx
-            .blocking_send(InternalMessage::UpdateTvState(state))
-            .expect("Serial TV state send");
+        if last_sent_state != Some(state) {
+            internal_message_tx
+                .blocking_send(InternalMessage::UpdateTvState(state))
+                .expect("Serial TV state send");
+            last_sent_state = Some(state);
+        }
 
         while let Ok(cmd) = serial_transactional_rx.try_recv() {
             println!("Serial: Command {:?}", cmd);

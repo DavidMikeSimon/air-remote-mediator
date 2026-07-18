@@ -1,7 +1,7 @@
 use crate::InternalMessage;
+use hotpath::wrap::tokio::sync::mpsc;
 use rppal::i2c::I2c;
 use std::time::Duration;
-use tokio::sync::mpsc;
 
 const ADDR_AIR_REMOTE: u16 = 0x05;
 

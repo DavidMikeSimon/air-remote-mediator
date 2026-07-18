@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 const_format = "0.2.35"
+hotpath = { version = "0.21.5", features = ['tokio'] }
 jiff = "0.2.28"
 rppal = "0.22.1"
 rumqttc = "0.25.0"
@@ -16,3 +17,7 @@ tokio = { version = "1.47.1", features = [
 	'sync',
 	'rt-multi-thread',
 ] }
+
+[features]
+hotpath = ["hotpath/hotpath"]
+hotpath-alloc = ["hotpath/hotpath-alloc"]

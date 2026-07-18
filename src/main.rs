@@ -3,10 +3,12 @@ mod mqtt;
 mod serial;
 mod transactional_receiver;
 
+use hotpath;
+use hotpath::wrap::tokio::sync::mpsc;
 use jiff::Zoned;
 use std::process;
+use std::thread;
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc;
 
 use crate::serial::EnergySavingMode;
 use crate::{i2c::I2CCommand, mqtt::MqttCommand, serial::SerialCommand};
@@ -92,30 +94,51 @@ async fn internal_check_thread(internal_message_tx: mpsc::Sender<InternalMessage
             .send(InternalMessage::InternalCheck)
             .await
             .expect("Internal ping send");
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        tokio::time::sleep(Duration::from_secs(5)).await;
     }
 }
 
 #[tokio::main()]
+#[hotpath::main()]
 async fn main() {
+    hotpath::tokio_runtime!();
     println!("Starting up");
 
-    let (internal_message_tx, mut internal_message_rx) = mpsc::channel::<InternalMessage>(100);
+    let (internal_message_tx, mut internal_message_rx) = hotpath::channel!(
+        tokio::sync::mpsc::channel::<InternalMessage>(100),
+        label = "internal_message",
+        log = true
+    );
 
     let mqtt_sender = internal_message_tx.clone();
-    let (mqtt_out_tx, mqtt_out_rx) = mpsc::channel::<MqttCommand>(10);
+    let (mqtt_out_tx, mqtt_out_rx) = hotpath::channel!(
+        tokio::sync::mpsc::channel::<MqttCommand>(10),
+        label = "mqtt_out",
+        log = true,
+    );
     let mqtt_thread_handle = tokio::task::spawn(mqtt::mqtt_thread(mqtt_sender, mqtt_out_rx));
 
     let i2c_sender = internal_message_tx.clone();
-    let (i2c_out_tx, i2c_out_rx) = mpsc::channel::<I2CCommand>(10);
-    let i2c_thread_handle =
-        tokio::task::spawn_blocking(move || i2c::blocking_i2c_thread(i2c_sender, i2c_out_rx));
+    let (i2c_out_tx, i2c_out_rx) = hotpath::channel!(
+        tokio::sync::mpsc::channel::<I2CCommand>(10),
+        label = "i2c_out",
+        log = true,
+    );
+    let i2c_thread_handle = thread::Builder::new()
+        .name("i2c_thread".to_owned())
+        .spawn(move || i2c::blocking_i2c_thread(i2c_sender, i2c_out_rx))
+        .expect("i2c thread spawn");
 
     let serial_sender = internal_message_tx.clone();
-    let (serial_out_tx, serial_out_rx) = mpsc::channel::<SerialCommand>(10);
-    let serial_thread_handle = tokio::task::spawn_blocking(move || {
-        serial::blocking_serial_thread(serial_sender, serial_out_rx)
-    });
+    let (serial_out_tx, serial_out_rx) = hotpath::channel!(
+        tokio::sync::mpsc::channel::<SerialCommand>(100),
+        label = "serial_out",
+        log = true,
+    );
+    let serial_thread_handle = thread::Builder::new()
+        .name("serial_thread".to_owned())
+        .spawn(move || serial::blocking_serial_thread(serial_sender, serial_out_rx))
+        .expect("serial thread spawn");
 
     let internal_check_sender = internal_message_tx.clone();
     let internal_thread_handle = tokio::task::spawn(internal_check_thread(internal_check_sender));

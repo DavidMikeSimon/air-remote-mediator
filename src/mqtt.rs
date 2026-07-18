@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use const_format::formatcp;
+use hotpath::wrap::tokio::sync::mpsc;
 use rumqttc::{
     ClientError,
     Event::{Incoming, Outgoing},
@@ -8,7 +9,6 @@ use rumqttc::{
 };
 use serde_json::json;
 use tokio::select;
-use tokio::sync::mpsc;
 
 use crate::InternalMessage;
 
