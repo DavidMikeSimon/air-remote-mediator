@@ -184,7 +184,17 @@ fn run_command(
 
     let mut resp_buf = [0; 24];
     let chars_read = port.read(&mut resp_buf)?;
-    let response = String::from_utf8_lossy(&resp_buf[0..chars_read]);
+    let response = str::from_utf8(&resp_buf[0..chars_read]).map_err(|err| {
+        Error::new(
+            ErrorKind::Other,
+            format!(
+                "Sent '{}', expected UTF-8 response, got {} bytes, UTF-8 error: {}",
+                cmd.to_string().trim(),
+                chars_read,
+                err
+            ),
+        )
+    })?;
     if chars_read != 10 {
         return Err(Error::new(
             ErrorKind::Other,

@@ -4,11 +4,11 @@ mod serial;
 mod transactional_receiver;
 
 use hotpath;
-use hotpath::wrap::tokio::sync::mpsc;
 use jiff::Zoned;
 use std::process;
 use std::thread;
 use std::time::{Duration, Instant};
+use tokio::time::timeout;
 
 use crate::serial::EnergySavingMode;
 use crate::{i2c::I2CCommand, mqtt::MqttCommand, serial::SerialCommand};
@@ -65,7 +65,6 @@ enum InternalMessage {
     PowerOn,
     PowerOff,
     UsbReadinessStateChange(bool),
-    InternalCheck,
 }
 
 fn get_passthru_flag_command(state: &TvState) -> I2CCommand {
@@ -85,16 +84,6 @@ fn get_energy_saving_mode(sun_elevation: f32) -> EnergySavingMode {
         (6.0..55.0, ..12) => EnergySavingMode::Off,
         // Daytime
         _ => EnergySavingMode::Minimum,
-    }
-}
-
-async fn internal_check_thread(internal_message_tx: mpsc::Sender<InternalMessage>) {
-    loop {
-        internal_message_tx
-            .send(InternalMessage::InternalCheck)
-            .await
-            .expect("Internal ping send");
-        tokio::time::sleep(Duration::from_secs(5)).await;
     }
 }
 
@@ -140,9 +129,6 @@ async fn main() {
         .spawn(move || serial::blocking_serial_thread(serial_sender, serial_out_rx))
         .expect("serial thread spawn");
 
-    let internal_check_sender = internal_message_tx.clone();
-    let internal_thread_handle = tokio::task::spawn(internal_check_thread(internal_check_sender));
-
     let mut current_sun_elevation: Option<f32> = None;
     let mut current_energy_saving_mode: Option<EnergySavingMode> = None;
     let mut tv_state = TvState::Unknown;
@@ -155,7 +141,9 @@ async fn main() {
         state: dennis_auto_sleep_state,
     });
 
-    while let Some(msg) = internal_message_rx.recv().await {
+    loop {
+        let timeout_or_msg = timeout(Duration::from_secs(1), internal_message_rx.recv()).await;
+
         if i2c_thread_handle.is_finished() {
             eprintln!("Error: I2C task died");
             process::exit(1);
@@ -168,10 +156,6 @@ async fn main() {
             eprintln!("Error: Serial thread died");
             process::exit(1);
         }
-        if internal_thread_handle.is_finished() {
-            eprintln!("Error: Internal check thread died");
-            process::exit(1);
-        }
 
         if (tv_state == TvState::TvOff || tv_state == TvState::TvOnOther)
             && dennis_state == DennisState::On
@@ -182,6 +166,17 @@ async fn main() {
             let _ = i2c_out_tx.try_send(I2CCommand::Sleep);
             last_auto_sleep = Instant::now();
         }
+
+        let msg = match timeout_or_msg {
+            Err(_) => {
+                continue;
+            } // Timed out, no worries, just keep waiting
+            Ok(None) => {
+                eprintln!("Error: Internal message queue returned None");
+                process::exit(1);
+            }
+            Ok(Some(msg)) => msg,
+        };
 
         match msg {
             InternalMessage::UpdateTvState(new_state) => {
@@ -318,13 +313,6 @@ async fn main() {
                 println!("Dennis State: {:?}", dennis_state);
                 let _ = mqtt_out_tx.try_send(MqttCommand::NoticeUsbChange { state: data });
             }
-            InternalMessage::InternalCheck => {
-                // No specific action needed, this just triggers the thread
-                // handle checks above to run again.
-            }
         }
     }
-
-    eprintln!("Error: Internal message queue returned None");
-    process::exit(1);
 }
