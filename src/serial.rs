@@ -78,10 +78,13 @@ fn serial_loop(
 ) -> Result<(), std::io::Error> {
     println!("Serial: Connecting");
 
-    let mut port = serialport::new("/dev/ttyUSB0", 9600)
-        .timeout(Duration::from_millis(800))
-        .open()
-        .expect("Opening serial port");
+    let mut port = serialport::new(
+        "/dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller-if00-port0",
+        9600,
+    )
+    .timeout(Duration::from_millis(800))
+    .open()
+    .expect("Opening serial port");
 
     while port.bytes_to_read()? > 0 {
         // Throw away any lingering response data
