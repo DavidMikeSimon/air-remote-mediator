@@ -68,7 +68,7 @@ pub(crate) fn blocking_serial_thread(
             println!("Serial: Connection lost: {}", error);
         }
 
-        std::thread::sleep(Duration::from_millis(500));
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
 
@@ -268,8 +268,9 @@ fn get_state(port: &mut dyn serialport::SerialPort) -> Result<TvState, std::io::
     };
     return match (power, hdmi_input) {
         (false, _) => Ok(TvState::TvOff),
-        (true, Some(1)) => Ok(TvState::TvOnDennis),
-        (true, _) => Ok(TvState::TvOnOther),
+        (true, Some(2..=4)) => Ok(TvState::TvOnOther),
+        // Dennis is on HDMI 1, but sometimes Sony gives us other weird numbers like 17
+        (true, _) => Ok(TvState::TvOnDennis),
     };
 }
 
