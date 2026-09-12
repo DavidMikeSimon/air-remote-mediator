@@ -43,6 +43,44 @@ impl TvState {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
+pub(crate) enum BrightnessMode {
+    Auto,
+    Bright,
+    Medium,
+    Dim,
+    VeryDim,
+}
+
+const BRIGHTNESS_MODE_AUTO: &str = "Auto";
+const BRIGHTNESS_MODE_BRIGHT: &str = "Bright";
+const BRIGHTNESS_MODE_MEDIUM: &str = "Medium";
+const BRIGHTNESS_MODE_DIM: &str = "Dim";
+const BRIGHTNESS_MODE_VERY_DIM: &str = "Very Dim";
+
+impl BrightnessMode {
+    fn from_str(s: &str) -> Option<Self> {
+        match s {
+            BRIGHTNESS_MODE_AUTO => Some(BrightnessMode::Auto),
+            BRIGHTNESS_MODE_BRIGHT => Some(BrightnessMode::Bright),
+            BRIGHTNESS_MODE_MEDIUM => Some(BrightnessMode::Medium),
+            BRIGHTNESS_MODE_DIM => Some(BrightnessMode::Dim),
+            BRIGHTNESS_MODE_VERY_DIM => Some(BrightnessMode::VeryDim),
+            _ => None,
+        }
+    }
+
+    fn to_str(&self) -> &'static str {
+        match self {
+            BrightnessMode::Auto => BRIGHTNESS_MODE_AUTO,
+            BrightnessMode::Bright => BRIGHTNESS_MODE_BRIGHT,
+            BrightnessMode::Medium => BRIGHTNESS_MODE_MEDIUM,
+            BrightnessMode::Dim => BRIGHTNESS_MODE_DIM,
+            BrightnessMode::VeryDim => BRIGHTNESS_MODE_VERY_DIM,
+        }
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum DennisState {
     Unknown,
@@ -57,6 +95,7 @@ enum InternalMessage {
     WakeDennis,
     SleepDennis,
     SetDennisAutoSleepMode(bool),
+    SetBrightnessMode(BrightnessMode),
     AsciiKey(u8),
     ConsumerCode(u8),
     KeyCode(u8),
@@ -74,16 +113,22 @@ fn get_passthru_flag_command(state: &TvState) -> I2CCommand {
     }
 }
 
-fn get_energy_saving_mode(sun_elevation: f32) -> EnergySavingMode {
-    match (sun_elevation, Zoned::now().hour()) {
-        // Night, sun is well below horizon
-        (..-6.0, _) => EnergySavingMode::Maximum,
-        // Early morning or late evening
-        (-6.0..6.0, _) => EnergySavingMode::Medium,
-        // Mid-morning tends to be extra bright in the living room
-        (6.0..55.0, ..12) => EnergySavingMode::Off,
-        // Daytime
-        _ => EnergySavingMode::Minimum,
+fn get_energy_saving_mode(brightness_mode: BrightnessMode, sun_elevation: f32) -> EnergySavingMode {
+    match brightness_mode {
+        BrightnessMode::Auto => match (sun_elevation, Zoned::now().hour()) {
+            // Night, sun is well below horizon
+            (..-6.0, _) => EnergySavingMode::Maximum,
+            // Early morning or late evening
+            (-6.0..6.0, _) => EnergySavingMode::Medium,
+            // Mid-morning tends to be extra bright in the living room
+            (6.0..55.0, ..12) => EnergySavingMode::Off,
+            // Daytime
+            _ => EnergySavingMode::Minimum,
+        },
+        BrightnessMode::Bright => EnergySavingMode::Off,
+        BrightnessMode::Medium => EnergySavingMode::Minimum,
+        BrightnessMode::Dim => EnergySavingMode::Medium,
+        BrightnessMode::VeryDim => EnergySavingMode::Maximum,
     }
 }
 
@@ -135,10 +180,14 @@ async fn main() {
     let mut dennis_state = DennisState::Unknown;
     let mut dennis_auto_sleep_state = true;
     let mut last_auto_sleep = Instant::now();
+    let mut brightness_mode = BrightnessMode::Auto;
 
     let _ = i2c_out_tx.try_send(get_passthru_flag_command(&tv_state));
     let _ = mqtt_out_tx.try_send(MqttCommand::NoticeAutoSleepChange {
         state: dennis_auto_sleep_state,
+    });
+    let _ = mqtt_out_tx.try_send(MqttCommand::NoticeBrightnessModeChange {
+        mode: brightness_mode,
     });
 
     loop {
@@ -204,7 +253,8 @@ async fn main() {
                         if let Some(sun_elevation) = current_sun_elevation
                             && tv_is_on
                         {
-                            let new_energy_saving_mode = get_energy_saving_mode(sun_elevation);
+                            let new_energy_saving_mode =
+                                get_energy_saving_mode(brightness_mode, sun_elevation);
                             current_energy_saving_mode = Some(new_energy_saving_mode);
                             let _ = serial_out_tx.try_send(SerialCommand::SetEnergySavingMode(
                                 new_energy_saving_mode,
@@ -216,7 +266,7 @@ async fn main() {
             InternalMessage::UpdateSunElevation(new_elevation) => {
                 current_sun_elevation = Some(new_elevation);
 
-                let new_energy_saving_mode = get_energy_saving_mode(new_elevation);
+                let new_energy_saving_mode = get_energy_saving_mode(brightness_mode, new_elevation);
                 if current_energy_saving_mode.is_none_or(|mode| mode != new_energy_saving_mode) {
                     if tv_state.tv_is_on() {
                         let _ = serial_out_tx
@@ -235,6 +285,19 @@ async fn main() {
             InternalMessage::SetDennisAutoSleepMode(state) => {
                 dennis_auto_sleep_state = state;
                 let _ = mqtt_out_tx.try_send(MqttCommand::NoticeAutoSleepChange { state });
+            }
+            InternalMessage::SetBrightnessMode(mode) => {
+                brightness_mode = mode;
+                let _ = mqtt_out_tx.try_send(MqttCommand::NoticeBrightnessModeChange { mode });
+                if let Some(sun_elevation) = current_sun_elevation
+                    && tv_state.tv_is_on()
+                {
+                    let new_energy_saving_mode =
+                        get_energy_saving_mode(brightness_mode, sun_elevation);
+                    current_energy_saving_mode = Some(new_energy_saving_mode);
+                    let _ = serial_out_tx
+                        .try_send(SerialCommand::SetEnergySavingMode(new_energy_saving_mode));
+                }
             }
             InternalMessage::OkButton => {
                 let _ = serial_out_tx.try_send(SerialCommand::Ok);

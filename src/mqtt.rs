@@ -10,7 +10,10 @@ use rumqttc::{
 use serde_json::json;
 use tokio::select;
 
-use crate::InternalMessage;
+use crate::{
+    BRIGHTNESS_MODE_AUTO, BRIGHTNESS_MODE_BRIGHT, BRIGHTNESS_MODE_DIM, BRIGHTNESS_MODE_MEDIUM,
+    BRIGHTNESS_MODE_VERY_DIM, BrightnessMode, InternalMessage,
+};
 
 const HYPER_HDR_TOPIC: &str = "HyperHDR/JsonAPI";
 const HA_DISCOVERY_TOPIC: &str = "homeassistant/device/air-remote-living-room/config";
@@ -23,6 +26,9 @@ const DENNIS_AUTO_SLEEP_STATE_TOPIC: &str =
     formatcp!("{HA_DEVICE_TOPIC_BASE}/dennis_auto_sleep_off/state");
 const DENNIS_AUTO_SLEEP_COMMAND_TOPIC: &str =
     formatcp!("{HA_DEVICE_TOPIC_BASE}/dennis_auto_sleep_off/command");
+const BRIGHTNESS_MODE_STATE_TOPIC: &str = formatcp!("{HA_DEVICE_TOPIC_BASE}/brightness_mode/state");
+const BRIGHTNESS_MODE_COMMAND_TOPIC: &str =
+    formatcp!("{HA_DEVICE_TOPIC_BASE}/brightness_mode/command");
 const TV_STATE_TOPIC: &str = formatcp!("{HA_DEVICE_TOPIC_BASE}/tv/state");
 const TV_COMMAND_TOPIC: &str = formatcp!("{HA_DEVICE_TOPIC_BASE}/tv/command");
 
@@ -30,6 +36,7 @@ const TV_COMMAND_TOPIC: &str = formatcp!("{HA_DEVICE_TOPIC_BASE}/tv/command");
 pub(crate) enum MqttCommand {
     NoticeUsbChange { state: bool },
     NoticeAutoSleepChange { state: bool },
+    NoticeBrightnessModeChange { mode: BrightnessMode },
     NoticeTvChange { state: bool },
     SetHyperHdr { state: bool },
 }
@@ -91,7 +98,17 @@ async fn mqtt_loop(
                                     .send(InternalMessage::SetDennisAutoSleepMode(false))
                                     .await
                                     .expect("Send dennis auto sleep off message"),
-                                other => println!("ERR: Unknown message {:?} on Dennis command topic", other)
+                                other => println!("ERR: Unknown message {:?} on Dennis auto-sleep command topic", other)
+                            }
+                        }
+                        BRIGHTNESS_MODE_COMMAND_TOPIC => {
+                            let s = str::from_utf8(&message.payload).expect("Parse brightness mode message");
+                            match BrightnessMode::from_str(s) {
+                                Some(mode) => internal_message_tx
+                                    .send(InternalMessage::SetBrightnessMode(mode))
+                                    .await
+                                    .expect("Send brightness mode message"),
+                                None => println!("ERR: Unknown brightness mode {:?} on brightness mode command topic", s),
                             }
                         }
                         TV_COMMAND_TOPIC => {
@@ -133,6 +150,10 @@ async fn mqtt_loop(
                             .await
                             .expect("Subscribe to dennis auto-sleep command topic");
                         mqtt_client
+                            .subscribe(BRIGHTNESS_MODE_COMMAND_TOPIC, QoS::AtLeastOnce)
+                            .await
+                            .expect("Subscribe to brightness mode command topic");
+                        mqtt_client
                             .subscribe(TV_COMMAND_TOPIC, QoS::AtLeastOnce)
                             .await
                             .expect("Subscribe to tv command topic");
@@ -153,6 +174,9 @@ async fn mqtt_loop(
                     },
                     Some(MqttCommand::NoticeAutoSleepChange { state }) => {
                         set_binary_state(&mqtt_client, DENNIS_AUTO_SLEEP_STATE_TOPIC, state).await.map_err(|err| err.to_string())?;
+                    },
+                    Some(MqttCommand::NoticeBrightnessModeChange { mode }) => {
+                        set_raw_state(&mqtt_client, BRIGHTNESS_MODE_STATE_TOPIC, mode.to_str()).await.map_err(|err| err.to_string())?;
                     },
                     Some(MqttCommand::NoticeTvChange { state }) => {
                         set_binary_state(&mqtt_client, TV_STATE_TOPIC, state).await.map_err(|err| err.to_string())?;
@@ -191,18 +215,24 @@ async fn set_binary_state(
     topic: &str,
     state: bool,
 ) -> Result<(), ClientError> {
+    set_raw_state(
+        client,
+        topic,
+        match state {
+            true => "ON",
+            false => "OFF",
+        },
+    )
+    .await
+}
+
+async fn set_raw_state(
+    client: &rumqttc::AsyncClient,
+    topic: &str,
+    state: &str,
+) -> Result<(), ClientError> {
     println!("Setting {} state {}", topic, state);
-    client
-        .publish(
-            topic,
-            QoS::AtLeastOnce,
-            true,
-            match state {
-                true => "ON",
-                false => "OFF",
-            },
-        )
-        .await
+    client.publish(topic, QoS::AtLeastOnce, true, state).await
 }
 
 async fn send_discovery_payload(client: &rumqttc::AsyncClient) -> Result<(), ClientError> {
@@ -238,6 +268,20 @@ async fn send_discovery_payload(client: &rumqttc::AsyncClient) -> Result<(), Cli
                         "payload_on": "ON",
                         "state_topic": DENNIS_AUTO_SLEEP_STATE_TOPIC,
                         "command_topic": DENNIS_AUTO_SLEEP_COMMAND_TOPIC,
+                    },
+                    "brightness-mode": {
+                        "name": "Air Remote Living Room Brightness Mode",
+                        "platform": "select",
+                        "unique_id": "brightness-mode",
+                        "options": [
+                            BRIGHTNESS_MODE_AUTO,
+                            BRIGHTNESS_MODE_BRIGHT,
+                            BRIGHTNESS_MODE_MEDIUM,
+                            BRIGHTNESS_MODE_DIM,
+                            BRIGHTNESS_MODE_VERY_DIM,
+                        ],
+                        "state_topic": BRIGHTNESS_MODE_STATE_TOPIC,
+                        "command_topic": BRIGHTNESS_MODE_COMMAND_TOPIC,
                     },
                     "tv": {
                         "name": "Air Remote Living Room TV",
