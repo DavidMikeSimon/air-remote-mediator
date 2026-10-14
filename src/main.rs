@@ -315,7 +315,9 @@ async fn main() {
                 }
             }
             InternalMessage::PowerOff => {
-                let _ = i2c_out_tx.try_send(I2CCommand::Sleep);
+                if dennis_auto_sleep_state {
+                    let _ = i2c_out_tx.try_send(I2CCommand::Sleep);
+                }
                 let _ = serial_out_tx.try_send(SerialCommand::PowerOff);
                 let _ = mqtt_out_tx.try_send(MqttCommand::NoticeTvChange { state: false });
             }
